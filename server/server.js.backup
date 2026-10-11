@@ -1,0 +1,1439 @@
+
+const express = require('express');
+const path = require('path');
+const fs = require('fs');
+const live = require('./live');
+const agent = require('./agent');
+const store = require('./store');
+
+const THRESHOLD = Math.max(
+  0,
+  Number(process.env.EVIDENCE_THRESHOLD || 70)
+);
+
+const LOCS = [
+  { name: 'Demo Govt School', type: 'SCHOOL', lat: 30.9115, lng: 75.8573 },
+  { name: 'Demo Residential Zone', type: 'RESIDENTIAL', lat: 30.919, lng: 75.87 },
+  { name: 'Demo Highway', type: 'ROAD', lat: 30.88, lng: 75.84 },
+  { name: 'Demo Farm Worker Zone', type: 'WORKER_ZONE', lat: 30.89, lng: 75.86 }
+];
+
+const ev = (type, source, detail, pts) => ({
+  type,
+  source,
+  detail,
+  pts,
+  sourceStatus: 'DEMO',
+  timestamp: new Date().toISOString()
+});
+
+function mk(id, status, lat, lng, aqi, evidence) {
+  return {
+    incidentId: id,
+    status,
+    incidentType: 'SUSPECTED_STUBBLE_BURNING',
+    location: {
+      type: 'Point',
+      coordinates: [lng, lat]
+    },
+    groundAQI: aqi,
+    evidence,
+    evidenceScore: evidence.reduce(
+      (sum, item) => sum + (Number(item.pts) || 0),
+      0
+    ),
+    exposure: null,
+    recommendation: null,
+    policy: null,
+    advisory: null,
+    weather: null,
+    decisions: [],
+    detectedAt: new Date().toISOString()
+  };
+}
+
+const seed = () => [
+  mk('INC-001', 'SUSPECTED', 30.901, 75.8573, 287, [
+    ev('SATELLITE_HOTSPOT', 'NASA FIRMS (demo)', 'Thermal hotspot, VIIRS', 40),
+    ev('GROUND_AQI', 'OpenAQ (demo)', 'Indicative AQI 287 at nearby station', 30),
+    ev('COMMUNITY_REPORT', 'Citizen report', 'Smoke visible near field', 20),
+    ev('RECENCY', 'System', 'Detected less than 3h ago', 10)
+  ]),
+  mk('INC-002', 'NEEDS_REVIEW', 30.95, 75.9, 150, [
+    ev('SATELLITE_HOTSPOT', 'NASA FIRMS (demo)', 'Hotspot only', 40),
+    ev('GROUND_AQI', 'OpenAQ (demo)', 'Indicative AQI 150', 30)
+  ]),
+  mk('INC-003', 'REJECTED', 30.85, 75.8, 90, [
+    ev('SATELLITE_HOTSPOT', 'NASA FIRMS (demo)', 'Possible industrial heat source', 40)
+  ]),
+  mk('INC-004', 'VERIFIED', 30.97, 75.95, 120, [
+    ev('SATELLITE_HOTSPOT', 'NASA FIRMS (demo)', 'Hotspot', 40),
+    ev('GROUND_AQI', 'OpenAQ (demo)', 'Indicative AQI 120', 30),
+    ev('COMMUNITY_REPORT', 'Citizen report', 'Smoke reported', 20)
+  ])
+];
+
+let DB = seed();
+
+const km = (a, b, c, d) => {
+  const rad = x => x * Math.PI / 180;
+  const h =
+    Math.sin(rad(c - a) / 2) ** 2 +
+    Math.cos(rad(a)) * Math.cos(rad(c)) *
+    Math.sin(rad(d - b) / 2) ** 2;
+
+  return +(12742 * Math.asin(Math.sqrt(Math.max(0, h)))).toFixed(2);
+};
+
+function validCoordinates(lat, lng) {
+  return Number.isFinite(lat) &&
+    Number.isFinite(lng) &&
+    Math.abs(lat) <= 90 &&
+    Math.abs(lng) <= 180;
+}
+
+function nextIncidentId() {
+  const highestId = DB.reduce((maximum, incident) => {
+    const match = /^INC-(\d+)$/.exec(incident.incidentId || '');
+    return match ? Math.max(maximum, Number(match[1])) : maximum;
+  }, 0);
+
+  return 'INC-' + String(highestId + 1).padStart(3, '0');
+}
+
+function isRecentTimestamp(value, maxAgeHours = 24) {
+  if (!value) return false;
+
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return false;
+
+  const age = Date.now() - timestamp;
+
+  return age >= 0 && age <= maxAgeHours * 60 * 60 * 1000;
+}
+
+function normalizeEvidenceScore(incident) {
+  incident.evidenceScore = (incident.evidence || []).reduce(
+    (sum, item) => sum + (Number(item.pts) || 0),
+    0
+  );
+}
+
+async function exposure(incident) {
+  const [lng, lat] = incident.location.coordinates;
+  let locations = LOCS;
+
+  if (store.enabled) {
+    try {
+      locations = await store.nearby(lat, lng, 3000);
+    } catch (error) {
+      console.error('MongoDB nearby lookup failed:', error.message);
+    }
+  }
+
+  const nearby = (locations || [])
+    .filter(location =>
+      Number.isFinite(Number(location.lat)) &&
+      Number.isFinite(Number(location.lng))
+    )
+    .map(location => ({
+      ...location,
+      distanceKm: km(
+        lat,
+        lng,
+        Number(location.lat),
+        Number(location.lng)
+      )
+    }))
+    .filter(location => location.distanceKm <= 3)
+    .sort((a, b) => a.distanceKm - b.distanceKm);
+
+  const closeToSensitiveArea = nearby.some(location =>
+    ['SCHOOL', 'RESIDENTIAL'].includes(location.type) &&
+    location.distanceKm <= 2
+  );
+
+  const aqi = Number(incident.groundAQI);
+
+  const level =
+    Number.isFinite(aqi) && aqi >= 200 && closeToSensitiveArea
+      ? 'HIGH'
+      : Number.isFinite(aqi) && aqi >= 100 && nearby.length
+        ? 'MEDIUM'
+        : 'LOW';
+
+  return {
+    level,
+    nearby,
+    note: 'Indicative only; not an official air-quality or medical exposure model.'
+  };
+}
+
+function recommend(incident) {
+  const school = incident.exposure?.nearby?.find(
+    location => location.type === 'SCHOOL'
+  );
+
+  return {
+    mode: 'DEMO (rule-based adapter; Strands/Bedrock not enabled)',
+    title: 'Smoke advisory: suspected agricultural burning nearby',
+    message:
+      `A human-verified incident suggests possible agricultural-residue smoke. ` +
+      `Reported ground AQI: ${incident.groundAQI ?? 'unavailable'}. ` +
+      `${school ? `A mapped school is about ${school.distanceKm} km away. ` : ''}` +
+      `Exposure level is ${incident.exposure?.level || 'UNKNOWN'} (indicative).`,
+    precautions: [
+      'Limit outdoor activity, especially for children and older adults',
+      'Keep windows closed when smoke is present',
+      'If you must go outdoors, consider a well-fitting particulate respirator',
+      'Follow local public-health and emergency instructions'
+    ],
+    reasoning:
+      `Evidence score ${incident.evidenceScore}/100. A human reviewer must verify the incident.`
+  };
+}
+
+let CEDAR = null;
+
+try {
+  CEDAR = {
+    lib: require('@cedar-policy/cedar-wasm/nodejs'),
+    policy: fs.readFileSync(
+      path.join(__dirname, '../aws/cedar/advisory.cedar'),
+      'utf8'
+    )
+  };
+} catch (error) {
+  console.warn(
+    'Cedar engine unavailable; authorization will be denied:',
+    error.message
+  );
+}
+
+async function recommendWithAgent(incident) {
+  if (agent.enabled()) {
+    try {
+      return await agent.strandsRecommend(incident);
+    } catch (error) {
+      console.error('Strands/Bedrock failed:', error.message);
+
+      const demo = recommend(incident);
+      demo.mode =
+        'DEMO fallback (Bedrock error: ' +
+        String(error.message).slice(0, 80) + ')';
+
+      return demo;
+    }
+  }
+
+  return recommend(incident);
+}
+
+function cedar(incident) {
+  const deny = reason => ({
+    engine: 'Cedar (@cedar-policy/cedar-wasm)',
+    decision: 'DENY',
+    reason
+  });
+
+  if (!CEDAR) {
+    return deny('Cedar engine unavailable; authorization denied.');
+  }
+
+  try {
+    const result = CEDAR.lib.isAuthorized({
+      principal: { type: 'User', id: 'aerosentinel-system' },
+      action: { type: 'Action', id: 'IssueAdvisory' },
+      resource: { type: 'Incident', id: incident.incidentId },
+      context: { threshold: THRESHOLD },
+      policies: { staticPolicies: CEDAR.policy },
+      entities: [{
+        uid: { type: 'Incident', id: incident.incidentId },
+        attrs: {
+          status: incident.status,
+          exposure: incident.exposure?.level || 'UNKNOWN',
+          evidenceScore: incident.evidenceScore
+        },
+        parents: []
+      }]
+    });
+
+    if (result.type !== 'success') {
+      console.error('Cedar error:', JSON.stringify(result.errors || result));
+      return deny('Cedar evaluation failed; authorization denied.');
+    }
+
+    const allowed = result.response.decision === 'allow';
+
+    return {
+      engine: 'Cedar (@cedar-policy/cedar-wasm)',
+      decision: allowed ? 'ALLOW' : 'DENY',
+      reason: allowed
+        ? 'Cedar policy permitted the request.'
+        : 'Cedar policy denied the request.'
+    };
+  } catch (error) {
+    console.error('Cedar evaluation failed:', error.message);
+    return deny('Cedar evaluation failed; authorization denied.');
+  }
+}
+
+const app = express();
+
+// Security headers and optional CORS allow-list.
+app.use((req, res, next) => {
+  res.set({
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'strict-origin-when-cross-origin'
+  });
+
+  const allowedOrigins = (process.env.CORS_ORIGIN || '')
+    .split(',')
+    .map(value => value.trim())
+    .filter(Boolean);
+
+  const origin = req.headers.origin;
+
+  if (
+    origin &&
+    (allowedOrigins.includes('*') || allowedOrigins.includes(origin))
+  ) {
+    res.set({
+      'Access-Control-Allow-Origin': origin,
+      'Vary': 'Origin',
+      'Access-Control-Allow-Methods': 'GET,POST,PATCH,OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type'
+    });
+  }
+
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
+
+app.use(express.json({ limit: '6mb' }));
+app.use(express.static(path.join(__dirname, '../public')));
+
+// Optional MongoDB persistence.
+app.use('/api', async (req, res, next) => {
+  if (store.enabled) {
+    try {
+      await store.init(seed, LOCS);
+      DB = await store.loadAll();
+
+      if (req.method !== 'GET') {
+        const originalJson = res.json.bind(res);
+
+        res.json = body => {
+          Promise.resolve()
+            .then(() => store.saveAll(DB))
+            .catch(error => {
+              console.error('MongoDB persist failed:', error.message);
+            })
+            .finally(() => originalJson(body));
+
+          return res;
+        };
+      }
+    } catch (error) {
+      console.error(
+        'MongoDB unavailable; using in-memory state:',
+        error.message
+      );
+    }
+  }
+
+  next();
+});
+
+const getIncident = (req, res) => {
+  const incident = DB.find(item => item.incidentId === req.params.id);
+
+  if (!incident) {
+    res.status(404).json({ error: 'Incident not found' });
+    return null;
+  }
+
+  return incident;
+};
+
+app.get('/api/health', (req, res) => {
+  res.json({
+    ok: true,
+    mode: process.env.DATA_MODE === 'LIVE' ? 'LIVE' : 'DEMO'
+  });
+});
+
+const SRC = {
+  hotspots: {
+    name: 'Satellite hotspots',
+    source: 'NASA FIRMS (VIIRS SNPP NRT)',
+    mode: 'DEMO',
+    reason: 'Not fetched yet',
+    updated: null
+  },
+  aqi: {
+    name: 'Ground air quality',
+    source: 'OpenAQ v3',
+    mode: 'DEMO',
+    reason: 'Not fetched yet',
+    updated: null
+  },
+  weather: {
+    name: 'Incident weather and wind',
+    source: 'Open-Meteo',
+    mode: 'UNAVAILABLE',
+    reason: 'Not fetched yet',
+    updated: null
+  }
+};
+
+const demoHotspots = () => DB.map(incident => ({
+  lat: incident.location.coordinates[1],
+  lng: incident.location.coordinates[0],
+  timestamp: incident.detectedAt,
+  confidence: 'demo'
+}));
+
+const demoAqi = () => DB
+  .filter(incident => incident.groundAQI != null)
+  .map(incident => ({
+    id: 'demo-' + incident.incidentId,
+    name: 'Demo station near ' + incident.incidentId,
+    lat: incident.location.coordinates[1] + 0.005,
+    lng: incident.location.coordinates[0] + 0.005,
+    aqi: incident.groundAQI,
+    timestamp: incident.detectedAt,
+    freshness: 'STALE',
+    ageHours: null
+  }));
+
+async function feed(key, fetchLive, getDemo) {
+  try {
+    const data = await fetchLive();
+
+    if (!Array.isArray(data)) {
+      throw new Error('Live source returned an unexpected data format');
+    }
+
+    Object.assign(SRC[key], {
+      mode: 'LIVE',
+      reason: null,
+      updated: new Date().toISOString()
+    });
+
+    return {
+      ...pub(key),
+      data
+    };
+  } catch (error) {
+    Object.assign(SRC[key], {
+      mode: 'DEMO',
+      reason: error.message,
+      updated: new Date().toISOString()
+    });
+
+    console.error(`[${key.toUpperCase()}] Live feed failed:`, error.message);
+
+    return {
+      ...pub(key),
+      data: getDemo()
+    };
+  }
+}
+
+const pub = key => ({
+  mode: SRC[key].mode,
+  source: SRC[key].source,
+  lastUpdated: SRC[key].updated,
+  fallbackReason: SRC[key].reason
+});
+
+app.get('/api/hotspots', async (req, res) => {
+  res.json(await feed('hotspots', live.hotspots, demoHotspots));
+});
+
+app.get('/api/aqi', async (req, res) => {
+  res.json(await feed('aqi', live.aqi, demoAqi));
+});
+
+// Get live weather for a map point.
+// Example: /api/weather?lat=11.137&lng=77.340
+app.get('/api/weather', async (req, res) => {
+  const lat = Number(req.query.lat);
+  const lng = Number(req.query.lng);
+
+  if (
+    req.query.lat === undefined ||
+    req.query.lng === undefined ||
+    !validCoordinates(lat, lng)
+  ) {
+    return res.status(400).json({
+      error: 'Valid lat and lng query parameters are required.'
+    });
+  }
+
+  try {
+    const data = await live.weather(lat, lng);
+
+    const current = data.freshness === 'CURRENT';
+
+    Object.assign(SRC.weather, {
+      mode: current ? 'LIVE' : 'STALE',
+      reason: current
+        ? null
+        : `Weather observation freshness: ${data.freshness || 'UNKNOWN'}`,
+      updated: data.timestamp || new Date().toISOString()
+    });
+
+    return res.json({
+      mode: SRC.weather.mode,
+      source: SRC.weather.source,
+      data
+    });
+  } catch (error) {
+    Object.assign(SRC.weather, {
+      mode: 'UNAVAILABLE',
+      reason: error.message,
+      updated: new Date().toISOString()
+    });
+
+    console.error('[WEATHER] Live feed failed:', error.message);
+
+    return res.status(502).json({
+      mode: 'UNAVAILABLE',
+      source: SRC.weather.source,
+      error: 'Live weather is unavailable.',
+      reason: error.message
+    });
+  }
+});
+
+app.get('/api/status', (req, res) => {
+  const database = store.status();
+
+  res.json({
+    sources: [
+      ...Object.values(SRC).map(source => ({
+        name: source.name,
+        source: source.source,
+        mode: source.mode,
+        reason: source.reason,
+        updated: source.updated
+      })),
+      {
+        name: 'Community reports',
+        source: 'App (user-submitted)',
+        mode: 'LIVE',
+        updated: null
+      },
+      {
+        name: 'Database',
+        source: !database.enabled
+          ? 'In-memory (resets on restart)'
+          : database.connected
+            ? 'MongoDB (2dsphere)'
+            : 'MongoDB unreachable: in-memory fallback',
+        mode: database.connected ? 'LIVE' : 'DEMO',
+        updated: null
+      }
+    ],
+    threshold: THRESHOLD,
+    lastUpdated: new Date().toISOString(),
+    integrations: [
+      {
+        name: 'Strands agent + Amazon Bedrock',
+        state: agent.enabled()
+          ? 'Configured; demo fallback is used on error'
+          : 'Not configured (demo adapter in use)'
+      },
+      {
+        name: 'Cedar engine',
+        state: CEDAR
+          ? 'Loaded (cedar-wasm; fail-closed)'
+          : 'Unavailable (authorization denied)'
+      },
+      {
+        name: 'MongoDB',
+        state: database.connected
+          ? 'Connected'
+          : database.enabled
+            ? 'Configured but unreachable'
+            : 'Not configured (in-memory)'
+      },
+      {
+        name: 'S3 evidence uploads',
+        state: process.env.S3_BUCKET
+          ? 'Configured (S3_BUCKET set)'
+          : 'Not configured (photos not persisted)'
+      },
+      {
+        name: 'NASA FIRMS / OpenAQ keys',
+        state:
+          (process.env.DATA_MODE === 'LIVE' ? 'LIVE requested; ' : 'DEMO mode; ') +
+          (process.env.FIRMS_MAP_KEY ? 'FIRMS key set' : 'no FIRMS key') +
+          ', ' +
+          (process.env.OPENAQ_API_KEY ? 'OpenAQ key set' : 'no OpenAQ key')
+      }
+    ]
+  });
+});
+
+// Create suspected incidents from real NASA FIRMS detections only.
+app.post('/api/live/sync', async (req, res) => {
+  try {
+    const hotspots = await feed(
+      'hotspots',
+      live.hotspots,
+      demoHotspots
+    );
+
+    if (hotspots.mode !== 'LIVE') {
+      return res.status(409).json({
+        success: false,
+        error: 'Live hotspots unavailable: ' + hotspots.fallbackReason,
+        created: [],
+        createdCount: 0,
+        hotspotsSeen: 0
+      });
+    }
+
+    const airQuality = await feed('aqi', live.aqi, demoAqi);
+    const created = [];
+
+    let skippedDuplicates = 0;
+    let invalidCoordinates = 0;
+    let skippedOldHotspots = 0;
+
+    for (const point of hotspots.data) {
+      const lat = Number(point.lat);
+      const lng = Number(point.lng);
+
+      if (!validCoordinates(lat, lng)) {
+        invalidCoordinates++;
+        continue;
+      }
+
+      const pointTime = Date.parse(point.timestamp || '');
+      const pointTimeValid = Number.isFinite(pointTime);
+
+      // Ignore detections with invalid or future timestamps.
+      if (
+        !pointTimeValid ||
+        pointTime > Date.now() + 5 * 60 * 1000
+      ) {
+        skippedOldHotspots++;
+        continue;
+      }
+
+      // Prevent duplicate creation for the same recent detection.
+      const duplicate = DB.some(incident => {
+        const hasLiveSatelliteEvidence =
+          Array.isArray(incident.evidence) &&
+          incident.evidence.some(evidence =>
+            evidence.type === 'SATELLITE_HOTSPOT' &&
+            evidence.sourceStatus === 'LIVE'
+          );
+
+        if (!hasLiveSatelliteEvidence) return false;
+
+        const coordinates = incident.location?.coordinates;
+
+        if (!Array.isArray(coordinates) || coordinates.length < 2) {
+          return false;
+        }
+
+        const [oldLng, oldLat] = coordinates;
+
+        if (!validCoordinates(Number(oldLat), Number(oldLng))) {
+          return false;
+        }
+
+        if (km(lat, lng, Number(oldLat), Number(oldLng)) >= 1) {
+          return false;
+        }
+
+        const previousTime = Date.parse(incident.detectedAt || '');
+
+        if (Number.isFinite(previousTime)) {
+          return Math.abs(pointTime - previousTime) <= 24 * 60 * 60 * 1000;
+        }
+
+        return isRecentTimestamp(
+          incident.createdAt || incident.detectedAt,
+          24
+        );
+      });
+
+      if (duplicate) {
+        skippedDuplicates++;
+        continue;
+      }
+
+      // Only use fresh, valid, nearby OpenAQ readings as ground evidence.
+      const station = airQuality.mode === 'LIVE'
+        ? airQuality.data
+            .filter(item => {
+              const stationLat = Number(item.lat);
+              const stationLng = Number(item.lng);
+              const aqi = Number(item.aqi);
+              const ageHours = Number(item.ageHours);
+
+              return validCoordinates(stationLat, stationLng) &&
+                Number.isFinite(aqi) &&
+                aqi >= 0 &&
+                item.freshness === 'CURRENT' &&
+                Number.isFinite(ageHours) &&
+                ageHours >= 0 &&
+                ageHours <= 72;
+            })
+            .map(item => ({
+              ...item,
+              d: km(lat, lng, Number(item.lat), Number(item.lng))
+            }))
+            .filter(item => item.d <= 25)
+            .sort((a, b) => a.d - b.d)[0]
+        : null;
+
+      const makeEvidence = (
+        type,
+        source,
+        detail,
+        points,
+        timestamp
+      ) => ({
+        type,
+        source,
+        detail,
+        pts: points,
+        sourceStatus: 'LIVE',
+        timestamp: timestamp || new Date().toISOString()
+      });
+
+      const evidence = [
+        makeEvidence(
+          'SATELLITE_HOTSPOT',
+          'NASA FIRMS',
+          `VIIRS SNPP NRT thermal detection; confidence ${
+            point.confidence ?? 'unknown'
+          }`,
+          40,
+          point.timestamp
+        )
+      ];
+
+      if (station && Number(station.aqi) >= 100) {
+        evidence.push(
+          makeEvidence(
+            'GROUND_AQI',
+            'OpenAQ',
+            `${station.name || 'Nearby station'}; indicative AQI ${
+              station.aqi
+            }; distance ${station.d} km`,
+            30,
+            station.timestamp
+          )
+        );
+      }
+
+      if (isRecentTimestamp(point.timestamp, 24)) {
+        evidence.push(
+          makeEvidence(
+            'RECENCY',
+            'System',
+            'Detection is within the last 24 hours',
+            10,
+            point.timestamp
+          )
+        );
+      }
+
+      const incident = mk(
+        nextIncidentId(),
+        'SUSPECTED',
+        lat,
+        lng,
+        station ? Number(station.aqi) : null,
+        evidence
+      );
+
+      incident.detectedAt = new Date(pointTime).toISOString();
+      incident.createdAt = new Date().toISOString();
+
+      DB.push(incident);
+      created.push(incident.incidentId);
+    }
+
+    return res.json({
+      success: true,
+      created,
+      createdCount: created.length,
+      hotspotsSeen: hotspots.data.length,
+      hotspotsChecked: hotspots.data.length,
+      skippedDuplicates,
+      invalidCoordinates,
+      skippedOldHotspots,
+      aqiSourceMode: airQuality.mode,
+      eligibleAqiStations: airQuality.mode === 'LIVE'
+        ? airQuality.data.filter(item =>
+            item.freshness === 'CURRENT' &&
+            Number.isFinite(Number(item.ageHours)) &&
+            Number(item.ageHours) >= 0 &&
+            Number(item.ageHours) <= 72 &&
+            validCoordinates(Number(item.lat), Number(item.lng)) &&
+            Number.isFinite(Number(item.aqi))
+          ).length
+        : 0,
+      message: created.length
+        ? 'Suspected incidents created. Human verification is required.'
+        : 'No new incidents created. Review the diagnostic counts.'
+    });
+  } catch (error) {
+    console.error('Live sync failed:', error);
+
+    return res.status(500).json({
+      success: false,
+      error: 'Live sync failed',
+      detail: error.message
+    });
+  }
+});
+
+app.get('/api/locations', (req, res) => {
+  res.json(LOCS);
+});
+
+app.get('/api/incidents', (req, res) => {
+  res.json(DB);
+});
+
+app.get('/api/incidents/nearby', (req, res) => {
+  const lat = Number(req.query.lat);
+  const lng = Number(req.query.lng);
+  const radius = req.query.radiusKm === undefined
+    ? 5
+    : Number(req.query.radiusKm);
+
+  if (
+    req.query.lat === undefined ||
+    req.query.lng === undefined ||
+    !validCoordinates(lat, lng)
+  ) {
+    return res.status(400).json({
+      error: 'Valid lat and lng are required'
+    });
+  }
+
+  if (!(radius > 0 && radius <= 50)) {
+    return res.status(400).json({
+      error: 'radiusKm must be between 0 and 50'
+    });
+  }
+
+  const nearby = DB
+    .map(incident => ({
+      ...incident,
+      distanceKm: km(
+        lat,
+        lng,
+        incident.location.coordinates[1],
+        incident.location.coordinates[0]
+      )
+    }))
+    .filter(incident => incident.distanceKm <= radius)
+    .sort((a, b) => a.distanceKm - b.distanceKm);
+
+  res.json(nearby);
+});
+
+app.post('/api/incidents', (req, res) => {
+  const lat = Number(req.body.lat);
+  const lng = Number(req.body.lng);
+  const description = String(req.body.description || '')
+    .trim()
+    .slice(0, 500);
+
+  if (
+    req.body.lat === undefined ||
+    req.body.lng === undefined ||
+    !validCoordinates(lat, lng)
+  ) {
+    return res.status(400).json({
+      error: 'Invalid coordinates'
+    });
+  }
+
+  const evidence = {
+    type: 'ANALYST_ENTRY',
+    source: 'Analyst (manual)',
+    detail: description || 'Manually created incident',
+    pts: 0,
+    sourceStatus: 'USER_SUBMITTED',
+    timestamp: new Date().toISOString()
+  };
+
+  const incident = mk(
+    nextIncidentId(),
+    'SUSPECTED',
+    lat,
+    lng,
+    null,
+    [evidence]
+  );
+
+  incident.createdAt = new Date().toISOString();
+  DB.push(incident);
+
+  res.status(201).json(incident);
+});
+
+app.get('/api/incidents/:id', (req, res) => {
+  const incident = getIncident(req, res);
+  if (incident) res.json(incident);
+});
+
+// Retrieve weather for an incident's stored coordinates.
+app.post('/api/incidents/:id/weather', async (req, res) => {
+  const incident = getIncident(req, res);
+  if (!incident) return;
+
+  const coordinates = incident.location?.coordinates;
+
+  if (!Array.isArray(coordinates) || coordinates.length < 2) {
+    return res.status(422).json({
+      error: 'Incident has no valid location.'
+    });
+  }
+
+  const [lng, lat] = coordinates;
+
+  if (!validCoordinates(Number(lat), Number(lng))) {
+    return res.status(422).json({
+      error: 'Incident has invalid coordinates.'
+    });
+  }
+
+  try {
+    const weather = await live.weather(Number(lat), Number(lng));
+
+    incident.weather = weather;
+
+    const current = weather.freshness === 'CURRENT';
+
+    Object.assign(SRC.weather, {
+      mode: current ? 'LIVE' : 'STALE',
+      reason: current
+        ? null
+        : `Weather observation freshness: ${weather.freshness || 'UNKNOWN'}`,
+      updated: weather.timestamp || new Date().toISOString()
+    });
+
+    return res.json({
+      incidentId: incident.incidentId,
+      weather
+    });
+  } catch (error) {
+    Object.assign(SRC.weather, {
+      mode: 'UNAVAILABLE',
+      reason: error.message,
+      updated: new Date().toISOString()
+    });
+
+    console.error('[WEATHER] Incident lookup failed:', error.message);
+
+    return res.status(502).json({
+      error: 'Could not retrieve live weather for this incident.',
+      reason: error.message
+    });
+  }
+});
+
+app.patch('/api/incidents/:id/verify', (req, res) => {
+  const incident = getIncident(req, res);
+  if (!incident) return;
+
+  const statuses = {
+    VERIFY: 'VERIFIED',
+    REJECT: 'REJECTED',
+    MORE_EVIDENCE: 'NEEDS_REVIEW'
+  };
+
+  const status = statuses[req.body.action];
+
+  if (!status) {
+    return res.status(400).json({
+      error: 'action must be VERIFY, REJECT or MORE_EVIDENCE'
+    });
+  }
+
+  const reason = typeof req.body.reason === 'string'
+    ? req.body.reason.trim().slice(0, 300)
+    : '';
+
+  if (req.body.action !== 'VERIFY' && !reason) {
+    return res.status(400).json({
+      error: 'A reason is required to reject or request more evidence'
+    });
+  }
+
+  incident.decisions ||= [];
+
+  incident.decisions.push({
+    action: req.body.action,
+    status,
+    reason,
+    reviewer: 'Local reviewer (no authentication in this build)',
+    decidedAt: new Date().toISOString()
+  });
+
+  incident.status = status;
+  incident.exposure = null;
+  incident.recommendation = null;
+  incident.policy = null;
+  incident.advisory = null;
+
+  res.json(incident);
+});
+
+app.post('/api/incidents/:id/exposure', async (req, res, next) => {
+  try {
+    const incident = getIncident(req, res);
+    if (!incident) return;
+
+    if (incident.status !== 'VERIFIED') {
+      return res.status(409).json({
+        error: 'Incident must be VERIFIED first'
+      });
+    }
+
+    incident.exposure = await exposure(incident);
+    res.json(incident);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/incidents/:id/advisory', async (req, res, next) => {
+  try {
+    const incident = getIncident(req, res);
+    if (!incident) return;
+
+    if (incident.status !== 'VERIFIED' || !incident.exposure) {
+      return res.status(409).json({
+        error: 'Verify incident and compute exposure first'
+      });
+    }
+
+    incident.recommendation = await recommendWithAgent(incident);
+    res.json(incident);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/incidents/:id/policy-check', (req, res) => {
+  const incident = getIncident(req, res);
+  if (!incident) return;
+
+  if (incident.status !== 'VERIFIED') {
+    return res.status(409).json({
+      error: 'Incident must be VERIFIED before policy evaluation.'
+    });
+  }
+
+  if (!incident.exposure || !incident.recommendation) {
+    return res.status(409).json({
+      error: 'Exposure assessment and AI recommendation are required.'
+    });
+  }
+
+  const evidence = Array.isArray(incident.evidence)
+    ? incident.evidence
+    : [];
+
+  // Citizen reports cannot substitute for fresh backend-collected evidence.
+  const freshSatellite = evidence.some(item =>
+    item.type === 'SATELLITE_HOTSPOT' &&
+    item.sourceStatus === 'LIVE' &&
+    isRecentTimestamp(item.timestamp, 24)
+  );
+
+  if (!freshSatellite) {
+    incident.policy = {
+      engine: 'AeroSentinel evidence validation',
+      decision: 'DENY',
+      reason: 'A live satellite detection from the last 24 hours is required.'
+    };
+
+    incident.advisory = {
+      status: 'BLOCKED',
+      reason: incident.policy.reason
+    };
+
+    return res.status(409).json({
+      error: incident.policy.reason,
+      incident
+    });
+  }
+
+  const freshAqi = evidence.some(item =>
+    item.type === 'GROUND_AQI' &&
+    item.sourceStatus === 'LIVE' &&
+    isRecentTimestamp(item.timestamp, 72)
+  );
+
+  if (!freshAqi) {
+    incident.policy = {
+      engine: 'AeroSentinel evidence validation',
+      decision: 'DENY',
+      reason: 'Live ground AQI evidence from the last 72 hours is required.'
+    };
+
+    incident.advisory = {
+      status: 'BLOCKED',
+      reason: incident.policy.reason
+    };
+
+    return res.status(409).json({
+      error: incident.policy.reason,
+      incident
+    });
+  }
+
+  // Only trusted, fresh, backend-collected evidence contributes to Cedar.
+  const trustedEvidenceScore = evidence.reduce((sum, item) => {
+    if (item.sourceStatus !== 'LIVE') return sum;
+
+    const fresh =
+      item.type === 'SATELLITE_HOTSPOT'
+        ? isRecentTimestamp(item.timestamp, 24)
+        : item.type === 'GROUND_AQI'
+          ? isRecentTimestamp(item.timestamp, 72)
+          : item.type === 'RECENCY'
+            ? isRecentTimestamp(item.timestamp, 24)
+            : false;
+
+    return fresh ? sum + (Number(item.pts) || 0) : sum;
+  }, 0);
+
+  incident.policy = cedar({
+    ...incident,
+    evidenceScore: trustedEvidenceScore
+  });
+
+  incident.advisory = incident.policy.decision === 'ALLOW'
+    ? {
+        status: 'ISSUED',
+        ...incident.recommendation,
+        generationMode: incident.recommendation.mode,
+        authorizationEngine: incident.policy.engine,
+        issuedAt: new Date().toISOString()
+      }
+    : {
+        status: 'BLOCKED',
+        reason: incident.policy.reason
+      };
+
+  return res.json(incident);
+});
+
+async function storePhoto(base64, name) {
+  if (!base64) return null;
+
+  const bucket = process.env.S3_BUCKET;
+  const region = process.env.S3_REGION;
+
+  if (!bucket || !region) {
+    throw new Error('Evidence storage is not configured');
+  }
+
+  const {
+    S3Client,
+    PutObjectCommand
+  } = require('@aws-sdk/client-s3');
+
+  const match = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=\r\n]+)$/.exec(
+    String(base64)
+  );
+
+  if (!match) {
+    throw new Error('Photo must be a valid JPEG, PNG, or WebP data URL');
+  }
+
+  const contentType = match[1];
+  const encoded = match[2].replace(/\s/g, '');
+  const body = Buffer.from(encoded, 'base64');
+
+  if (!body.length || body.length > 4 * 1024 * 1024) {
+    throw new Error('Photo must be non-empty and no larger than 4 MB');
+  }
+
+  const safeName = String(name || 'photo')
+    .replace(/[^\w.-]/g, '_')
+    .slice(0, 100);
+
+  const key = `reports/${Date.now()}-${safeName}`;
+
+  const s3 = new S3Client({ region });
+
+  try {
+    await s3.send(new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Body: body,
+      ContentType: contentType,
+      ServerSideEncryption: 'AES256'
+    }));
+
+    return {
+      storage: 'S3',
+      bucket,
+      key,
+      contentType
+    };
+  } catch (error) {
+    console.error('S3 evidence upload failed:', error.message);
+    throw new Error('Evidence upload failed; report was not accepted');
+  } finally {
+    s3.destroy();
+  }
+}
+
+app.post('/api/reports', async (req, res, next) => {
+  try {
+    const {
+      description,
+      timestamp,
+      photo,
+      photoName
+    } = req.body;
+
+    const lat = Number(req.body.lat);
+    const lng = Number(req.body.lng);
+
+    if (
+      !validCoordinates(lat, lng) ||
+      req.body.lat === '' ||
+      req.body.lng === '' ||
+      req.body.lat === undefined ||
+      req.body.lng === undefined
+    ) {
+      return res.status(400).json({
+        error: 'Invalid coordinates'
+      });
+    }
+
+    if (
+      typeof description !== 'string' ||
+      !description.trim() ||
+      description.length > 500
+    ) {
+      return res.status(400).json({
+        error: 'Description required (max 500 chars)'
+      });
+    }
+
+    if (photo && String(photo).length > 5.6e6) {
+      return res.status(413).json({
+        error: 'Photo too large'
+      });
+    }
+
+    const storedPhoto = await storePhoto(photo, photoName);
+
+    const evidence = {
+      type: 'COMMUNITY_REPORT',
+      source: 'Citizen report',
+      detail: description.trim(),
+      pts: 20,
+      sourceStatus: 'USER_SUBMITTED',
+      timestamp: timestamp && Number.isFinite(Date.parse(timestamp))
+        ? new Date(timestamp).toISOString()
+        : new Date().toISOString(),
+      photo: storedPhoto
+    };
+
+    const nearby = DB
+      .filter(incident => incident.status !== 'REJECTED')
+      .map(incident => ({
+        incident,
+        distance: km(
+          lat,
+          lng,
+          incident.location.coordinates[1],
+          incident.location.coordinates[0]
+        )
+      }))
+      .filter(item => item.distance <= 2)
+      .sort((a, b) => a.distance - b.distance)[0];
+
+    let incident = nearby?.incident;
+
+    if (incident) {
+      incident.evidence ||= [];
+      incident.evidence.push(evidence);
+
+      // New evidence invalidates prior assessments.
+      incident.exposure = null;
+      incident.recommendation = null;
+      incident.policy = null;
+      incident.advisory = null;
+    } else {
+      incident = mk(
+        nextIncidentId(),
+        'NEEDS_REVIEW',
+        lat,
+        lng,
+        null,
+        [evidence]
+      );
+
+      incident.createdAt = new Date().toISOString();
+      DB.push(incident);
+    }
+
+    normalizeEvidenceScore(incident);
+
+    res.status(201).json({
+      message: 'Report received — awaiting verification.',
+      incidentId: incident.incidentId,
+      status: incident.status,
+      photo: storedPhoto
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/reset', (req, res) => {
+  DB = seed();
+  res.json({ ok: true });
+});
+
+app.use((error, req, res, next) => {
+  if (res.headersSent) return next(error);
+
+  if (error.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'Malformed JSON' });
+  }
+
+  if (error.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Payload too large' });
+  }
+
+  console.error(error.message);
+
+  res.status(500).json({
+    error: error.message || 'Internal error'
+  });
+});
+
+module.exports = app;
+
+if (require.main === module) {
+  if (process.argv.includes('--selftest')) {
+    const server = app.listen(0, async () => {
+      try {
+        const base =
+          `http://127.0.0.1:${server.address().port}/api/incidents/INC-001`;
+
+        const request = async (url, method, body = {}) => {
+          const response = await fetch(base + url, {
+            method,
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+
+          const data = await response.json();
+
+          if (!response.ok) {
+            const error = new Error(data.error || `HTTP ${response.status}`);
+            error.status = response.status;
+            error.data = data;
+            throw error;
+          }
+
+          return data;
+        };
+
+        await request('/verify', 'PATCH', { action: 'VERIFY' });
+
+        const exposed = await request('/exposure', 'POST');
+
+        if (!exposed.exposure) {
+          throw new Error('Exposure assessment was not generated.');
+        }
+
+        const advised = await request('/advisory', 'POST');
+
+        if (!advised.recommendation) {
+          throw new Error('Recommendation was not generated.');
+        }
+
+        // Seed data is DEMO data. A policy denial for missing live evidence
+        // is expected and must not be treated as a failed self-test.
+        let policyResult;
+
+        try {
+          policyResult = await request('/policy-check', 'POST');
+        } catch (error) {
+          if (
+            error.status !== 409 ||
+            !error.data?.incident?.policy
+          ) {
+            throw error;
+          }
+
+          policyResult = error.data.incident;
+        }
+
+        const decision = policyResult.policy?.decision;
+        const advisoryStatus = policyResult.advisory?.status;
+
+        if (!['ALLOW', 'DENY'].includes(decision)) {
+          throw new Error('Policy evaluation returned no valid decision.');
+        }
+
+        if (
+          decision === 'DENY' &&
+          advisoryStatus !== 'BLOCKED'
+        ) {
+          throw new Error(
+            'Fail-closed check failed: denied advisory was not blocked.'
+          );
+        }
+
+        if (
+          decision === 'ALLOW' &&
+          advisoryStatus !== 'ISSUED'
+        ) {
+          throw new Error(
+            'Policy allowed the advisory, but it was not issued.'
+          );
+        }
+
+        console.log('Self-test passed:', {
+          exposure: policyResult.exposure?.level,
+          policy: decision,
+          advisory: advisoryStatus,
+          note: decision === 'DENY'
+            ? 'Demo evidence correctly denied; live evidence was not fabricated.'
+            : 'Policy allowed the incident based on available evidence.'
+        });
+      } catch (error) {
+        console.error('Self-test failed:', error.message);
+        process.exitCode = 1;
+      } finally {
+        server.close();
+      }
+    });
+  } else {
+    const port = process.env.PORT || 3000;
+
+    app.listen(port, () => {
+      console.log(`AeroSentinel on http://localhost:${port}`);
+    });
+  }
+}

@@ -1,0 +1,123 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: AeroSentinel - S3 + CloudFront (site), HTTP API + Lambda (API), S3 (evidence photos), Bedrock access, CloudWatch alarm.
+
+Parameters:
+  DataMode: { Type: String, Default: DEMO, AllowedValues: [DEMO, LIVE] }
+  EvidenceThreshold: { Type: Number, Default: 70 }
+  BedrockModelId: { Type: String, Default: '', Description: Bedrock model or inference-profile ID. Empty = demo adapter. }
+  FirmsMapKey: { Type: String, Default: '', NoEcho: true }
+  OpenAqApiKey: { Type: String, Default: '', NoEcho: true }
+  MongoDbUri: { Type: String, Default: '', NoEcho: true, Description: MongoDB connection string (e.g. Atlas). Empty = in-memory. }
+
+Resources:
+  EvidenceBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration: { BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true }
+      BucketEncryption: { ServerSideEncryptionConfiguration: [{ ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 } }] }
+      LifecycleConfiguration: { Rules: [{ Id: expire-reports, Status: Enabled, Prefix: reports/, ExpirationInDays: 90 }] }
+
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration: { BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true }
+      BucketEncryption: { ServerSideEncryptionConfiguration: [{ ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 } }] }
+
+  SiteOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig: { Name: !Sub '${AWS::StackName}-oac', OriginAccessControlOriginType: s3, SigningBehavior: always, SigningProtocol: sigv4 }
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        Origins:
+          - Id: site
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt SiteOAC.Id
+            S3OriginConfig: { OriginAccessIdentity: '' }
+          - Id: api
+            DomainName: !Sub '${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com'
+            CustomOriginConfig: { OriginProtocolPolicy: https-only }
+        DefaultCacheBehavior:
+          TargetOriginId: site
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6   # Managed-CachingOptimized
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a3c9d9a34   # Managed-CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac   # Managed-AllViewerExceptHostHeader
+
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub '${SiteBucket.Arn}/*'
+            Condition: { StringEquals: { 'AWS:SourceArn': !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}' } }
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-api'
+      Runtime: nodejs22.x
+      Handler: server/lambda.handler
+      CodeUri: build/            # created by: npm run build:lambda
+      MemorySize: 512
+      Timeout: 30
+      Environment:
+        Variables:
+          DATA_MODE: !Ref DataMode
+          EVIDENCE_THRESHOLD: !Ref EvidenceThreshold
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+          FIRMS_MAP_KEY: !Ref FirmsMapKey
+          OPENAQ_API_KEY: !Ref OpenAqApiKey
+          S3_BUCKET: !Ref EvidenceBucket
+          MONGODB_URI: !Ref MongoDbUri
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub '${EvidenceBucket.Arn}/reports/*'
+            - Effect: Allow
+              Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:bedrock:*::foundation-model/*'
+                - !Sub 'arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:inference-profile/*'
+      Events:
+        Any: { Type: HttpApi, Properties: { Path: '/{proxy+}', Method: ANY } }
+
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: { LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-api', RetentionInDays: 14 }
+
+  ApiErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: AeroSentinel API Lambda errors
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{ Name: FunctionName, Value: !Ref ApiFunction }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  SiteUrl: { Value: !Sub 'https://${Distribution.DomainName}' }
+  SiteBucketName: { Value: !Ref SiteBucket }
+  DistributionId: { Value: !Ref Distribution }
+  EvidenceBucketName: { Value: !Ref EvidenceBucket }

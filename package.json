@@ -1,0 +1,22 @@
+{
+  "name": "aerosentinel",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server/server.js",
+    "test": "node --env-file-if-exists=.env server/server.js --selftest",
+    "build:lambda": "node scripts/build-lambda.js",
+    "deploy:site": "node scripts/deploy-site.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1149.0",
+    "@cedar-policy/cedar-wasm": "^4.13.0",
+    "@codegenie/serverless-express": "^4.16.0",
+    "@strands-agents/sdk": "^1.20.0",
+    "express": "^5.1.0",
+    "mongoose": "^8.0.0"
+  },
+  "engines": {
+    "node": ">=22.9"
+  }
+}

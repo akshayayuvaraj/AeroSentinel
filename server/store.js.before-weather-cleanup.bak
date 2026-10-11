@@ -1,0 +1,285 @@
+﻿
+'use strict';
+
+const dns = require('node:dns');
+
+// MongoDB persistence is enabled only when MONGODB_URI is configured.
+const enabled = Boolean(process.env.MONGODB_URI);
+
+let mongoose;
+let Inc;
+let Loc;
+let ready = null;
+let connected = false;
+
+const strip = ({
+  _id,
+  __v,
+  createdAt,
+  updatedAt,
+  ...rest
+}) => rest;
+
+function configureDns() {
+  const servers = (
+    process.env.MONGODB_DNS_SERVERS || '8.8.8.8,1.1.1.1'
+  )
+    .split(',')
+    .map(server => server.trim())
+    .filter(Boolean);
+
+  if (servers.length === 0) {
+    throw new Error('No MongoDB DNS servers are configured');
+  }
+
+  dns.setServers(servers);
+}
+
+function models() {
+  if (Inc && Loc) return;
+
+  mongoose = require('mongoose');
+
+  const Schema = mongoose.Schema;
+  const Mixed = Schema.Types.Mixed;
+
+  const point = {
+    type: {
+      type: String,
+      enum: ['Point'],
+      default: 'Point'
+    },
+    coordinates: {
+      type: [Number],
+      required: true
+    }
+  };
+
+  const incidentSchema = new Schema(
+    {
+      incidentId: {
+        type: String,
+        required: true,
+        unique: true
+      },
+      status: String,
+      incidentType: String,
+      location: point,
+      groundAQI: Number,
+      evidence: [Mixed],
+      evidenceScore: Number,
+      exposure: Mixed,
+      weather: Mixed,
+      recommendation: Mixed,
+      policy: Mixed,
+      advisory: Mixed,
+      decisions: [Mixed],
+      detectedAt: String
+    },
+    {
+      timestamps: true,
+      minimize: false
+    }
+  );
+
+  incidentSchema.index({ location: '2dsphere' });
+
+  const locationSchema = new Schema({
+    name: String,
+    type: String,
+    location: point
+  });
+
+  locationSchema.index({ location: '2dsphere' });
+
+  Inc =
+    mongoose.models.Incident ||
+    mongoose.model('Incident', incidentSchema);
+
+  Loc =
+    mongoose.models.LocationOfInterest ||
+    mongoose.model('LocationOfInterest', locationSchema);
+}
+
+async function saveAll(incidents) {
+  if (!connected) {
+    throw new Error('Cannot save incidents: MongoDB is not connected');
+  }
+
+  if (!Array.isArray(incidents)) {
+    throw new TypeError('saveAll expects an array of incidents');
+  }
+
+  const ids = incidents.map(incident => incident.incidentId);
+
+  if (ids.some(id => !id)) {
+    throw new Error('Every incident must have an incidentId');
+  }
+
+  if (new Set(ids).size !== ids.length) {
+    throw new Error('Duplicate incidentId values found');
+  }
+
+  if (incidents.length > 0) {
+    await Inc.bulkWrite(
+      incidents.map(incident => ({
+        replaceOne: {
+          filter: { incidentId: incident.incidentId },
+          replacement: incident,
+          upsert: true
+        }
+      }))
+    );
+  }
+
+  // Full-snapshot behavior: removes documents absent from incidents.
+  // Call only when incidents represents the COMPLETE collection.
+  await Inc.deleteMany({
+    incidentId: { $nin: ids }
+  });
+}
+
+function init(seed, locations) {
+  if (!enabled) {
+    return Promise.reject(
+      new Error('MongoDB is not configured: MONGODB_URI is missing')
+    );
+  }
+
+  if (ready) return ready;
+
+  ready = (async () => {
+    // Must happen before the MongoDB SRV connection is attempted.
+    configureDns();
+    models();
+
+    await mongoose.connect(process.env.MONGODB_URI, {
+      serverSelectionTimeoutMS: 10000
+    });
+
+    await Promise.all([
+      Inc.init(),
+      Loc.init()
+    ]);
+
+    // Seed locations only if the collection is empty.
+    if (await Loc.countDocuments() === 0 && locations.length > 0) {
+      await Loc.insertMany(
+        locations.map(location => ({
+          name: location.name,
+          type: location.type,
+          location: {
+            type: 'Point',
+            coordinates: [location.lng, location.lat]
+          }
+        }))
+      );
+    }
+
+    // Seed incidents only if the collection is empty.
+    if (await Inc.countDocuments() === 0) {
+      const initialIncidents = seed();
+
+      if (initialIncidents.length > 0) {
+        await Inc.bulkWrite(
+          initialIncidents.map(incident => ({
+            replaceOne: {
+              filter: { incidentId: incident.incidentId },
+              replacement: incident,
+              upsert: true
+            }
+          }))
+        );
+      }
+    }
+
+    connected = true;
+
+    console.log('MongoDB connected successfully');
+
+    return true;
+  })().catch(async error => {
+    connected = false;
+    ready = null;
+
+    console.error('MongoDB initialization failed:', error.message);
+
+    if (mongoose?.connection?.readyState !== 0) {
+      try {
+        await mongoose.disconnect();
+      } catch {
+        // Keep the original initialization error.
+      }
+    }
+
+    throw error;
+  });
+
+  return ready;
+}
+
+async function loadAll() {
+  if (!connected) {
+    throw new Error('MongoDB is not connected');
+  }
+
+  const incidents = await Inc.find()
+    .sort({ incidentId: 1 })
+    .lean();
+
+  return incidents.map(strip);
+}
+
+async function nearby(lat, lng, meters) {
+  if (!connected) {
+    throw new Error('MongoDB is not connected');
+  }
+
+  if (
+    !Number.isFinite(lat) ||
+    !Number.isFinite(lng) ||
+    !Number.isFinite(meters) ||
+    lat < -90 ||
+    lat > 90 ||
+    lng < -180 ||
+    lng > 180 ||
+    meters < 0
+  ) {
+    throw new TypeError('Invalid coordinates or search distance');
+  }
+
+  const locations = await Loc.find({
+    location: {
+      $near: {
+        $geometry: {
+          type: 'Point',
+          coordinates: [lng, lat]
+        },
+        $maxDistance: meters
+      }
+    }
+  }).lean();
+
+  return locations.map(location => ({
+    name: location.name,
+    type: location.type,
+    lat: location.location.coordinates[1],
+    lng: location.location.coordinates[0]
+  }));
+}
+
+function status() {
+  return {
+    enabled,
+    connected
+  };
+}
+
+module.exports = {
+  enabled,
+  init,
+  loadAll,
+  saveAll,
+  nearby,
+  status
+};

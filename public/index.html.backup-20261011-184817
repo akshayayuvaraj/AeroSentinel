@@ -1,0 +1,613 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AeroSentinel · Hyperlocal Environmental Intelligence</title>
+<link rel="icon" type="image/svg+xml" href="/logo.svg"><link rel="apple-touch-icon" href="/logo.svg"><meta name="theme-color" content="#F5F3ED">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+:root{--bg:#F5F3ED;--pn:#fff;--tx:#20231F;--mu:#72766F;--or:#F2673A;--li:#C9F56A;--ln:#DFE1D8;--rd:#C83D35;--serif:"Iowan Old Style",Georgia,"Times New Roman",serif}
+*{box-sizing:border-box}body{margin:0;font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--tx)}a{color:var(--tx)}small,.mu{color:var(--mu)}
+:focus-visible{outline:3px solid var(--or);outline-offset:2px}.skip{position:absolute;left:-999px}.skip:focus{left:10px;top:8px;background:var(--tx);color:#fff;padding:6px 10px;z-index:9999}
+header{position:sticky;top:0;z-index:2000;display:flex;flex-wrap:wrap;align-items:center;gap:8px 22px;padding:10px 28px;background:rgba(245,243,237,.94);border-bottom:1px solid var(--ln)}
+.brand{display:flex;align-items:center;gap:10px;text-decoration:none;font-weight:700;letter-spacing:-.01em}.brand img{width:32px;height:32px;border-radius:8px}nav{display:flex;gap:2px;flex:1;flex-wrap:wrap}
+nav a{padding:6px 12px;border-radius:99px;text-decoration:none;color:var(--mu)}nav a:hover{color:var(--tx)}nav a[aria-current=page]{background:var(--tx);color:#fff}.hr{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+main{max-width:1320px;margin:auto;padding:24px 28px 40px;outline:0}@media(max-width:800px){main{padding:16px}header{padding:10px 14px}}
+.eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--mu);margin:0 0 6px}.title{font:400 clamp(38px,6.5vw,76px)/1 var(--serif);letter-spacing:-.03em;margin:0}.title i{color:var(--or);font-style:normal}
+.hero{display:flex;justify-content:space-between;align-items:flex-end;gap:20px;flex-wrap:wrap;margin-bottom:22px}.lead{max-width:560px;color:var(--mu);margin:12px 0 0;font-size:15px}.rule{font:italic 16px var(--serif);max-width:260px;border-left:3px solid var(--or);padding-left:12px}
+.strip{display:grid;grid-template-columns:repeat(5,1fr);border:1px solid var(--ln);background:var(--pn);border-radius:10px;margin-bottom:14px}.strip div{padding:14px 18px;border-left:1px solid var(--ln)}.strip div:first-child{border:0}.strip b{display:block;font:400 34px/1.1 var(--serif)}.strip small{text-transform:uppercase;letter-spacing:.08em;font-size:10px}
+@media(max-width:800px){.strip{grid-template-columns:repeat(2,1fr)}.strip div{border-top:1px solid var(--ln)}}
+.mapwrap{position:relative;border:1px solid var(--ln);border-radius:10px;overflow:hidden;background:var(--pn)}.map{height:480px}.mapwrap.sm .map{height:560px}@media(max-width:800px){.map,.mapwrap.sm .map{height:340px}}
+.float{position:absolute;z-index:1000;display:flex;gap:6px;flex-wrap:wrap}.tr{top:10px;right:10px;justify-content:flex-end;max-width:70%}.legend{position:absolute;z-index:1000;left:10px;bottom:22px;background:rgba(255,255,255,.94);border:1px solid var(--ln);border-radius:8px;padding:8px 10px;font-size:11px}.legend span{display:flex;align-items:center;gap:6px}.dot{width:10px;height:10px;border-radius:50%;border:1.5px solid var(--tx);display:inline-block}
+.badge{position:absolute;z-index:1000;left:10px;top:10px;background:var(--tx);color:#fff;font-size:11px;padding:4px 9px;border-radius:99px;max-width:55%}.mapmsg{background:#fff;border:1px solid var(--ln);padding:5px 9px;border-radius:8px;font-size:12px;color:var(--mu);max-width:240px}
+.leaflet-container{background:#E9E8E1}.chip{background:#fff;border:1px solid var(--ln);color:var(--tx);border-radius:99px;padding:5px 12px;font-size:12px;cursor:pointer;margin:0}.chip[aria-pressed=true]{background:var(--tx);color:#fff;border-color:var(--tx)}label.chip{display:inline-flex;gap:6px;align-items:center}
+.cols{display:grid;grid-template-columns:1.7fr 1fr;gap:34px;margin-top:28px}@media(max-width:900px){.cols{grid-template-columns:1fr;gap:20px}}h2{font:400 22px var(--serif);margin:0 0 10px;letter-spacing:-.01em}h3.k{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--mu);margin:0 0 8px;font-weight:600}
+table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:10px 8px;border-bottom:1px solid var(--ln)}th{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--mu);font-weight:600}tr.row{cursor:pointer}tr.row:hover,tr.row:focus{background:#fff}.tw{overflow-x:auto}
+.tag{display:inline-block;padding:2px 9px;border-radius:99px;font-size:11px;font-weight:650;border:1px solid var(--tx);background:#fff}.tag.SUSPECTED{background:var(--or);border-color:var(--or)}.tag.VERIFIED{background:var(--li);border-color:var(--li)}.tag.REJECTED{background:var(--rd);border-color:var(--rd);color:#fff}
+.pill{font-size:10px;padding:1px 7px;border-radius:99px;border:1px solid var(--ln);background:#fff;color:var(--mu);letter-spacing:.04em;white-space:nowrap}.pill.LIVE,.pill.measured,.pill.sourced{background:var(--li);color:var(--tx);border-color:var(--li)}.pill.DEMO,.pill.simulated{border-color:var(--or);color:#B4421C}.pill.UNAVAILABLE{background:var(--rd);color:#fff;border-color:var(--rd)}.pill.calculated{border-color:var(--tx);color:var(--tx)}
+button,.btn{font:inherit;font-weight:600;background:var(--tx);color:#fff;border:1px solid var(--tx);border-radius:99px;padding:8px 16px;cursor:pointer;text-decoration:none;display:inline-block;margin:2px 4px 2px 0}button:hover{opacity:.88}button:disabled{opacity:.5;cursor:wait}button.ghost{background:transparent;color:var(--tx);border-color:var(--ln)}button.o,button.REJECT_{background:var(--or);border-color:var(--or);color:var(--tx)}button.l{background:var(--li);border-color:var(--li);color:var(--tx)}button.r{background:var(--rd);border-color:var(--rd)}
+.crumb{font-size:12px;color:var(--mu);margin-bottom:10px}.crumb a{color:var(--mu)}.ih{display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;align-items:flex-end;margin-bottom:18px}.ih h1{font:400 clamp(34px,5vw,60px)/1 var(--serif);margin:0 0 8px;letter-spacing:-.03em}
+.tl{display:flex;overflow-x:auto;border-top:1px solid var(--ln);border-bottom:1px solid var(--ln);margin-bottom:6px;background:var(--pn)}.st{flex:1;min-width:112px;border:0;border-left:1px solid var(--ln);border-radius:0;background:none;color:var(--tx);text-align:left;padding:12px 12px;margin:0;font-weight:500}.st:first-child{border-left:0}.st small{display:block}.st b{display:block;font-size:11px;letter-spacing:.1em}.st .ic{display:inline-block;width:18px;height:18px;border-radius:50%;border:2px solid var(--ln);text-align:center;font-size:10px;line-height:14px;margin-bottom:4px}
+.st.done .ic{background:var(--li);border-color:var(--tx)}.st.cur{background:#FFF1EB}.st.cur .ic{background:var(--or);border-color:var(--or)}.st.failed .ic{background:var(--rd);border-color:var(--rd);color:#fff}.st.sel{box-shadow:inset 0 -3px 0 var(--tx)}.st.pending{color:var(--mu)}
+.sbox{background:var(--pn);border:1px solid var(--ln);border-radius:10px;padding:14px 16px;margin-bottom:22px;min-height:70px}.ws{display:grid;grid-template-columns:1.5fr 1fr;gap:28px}@media(max-width:1000px){.ws{grid-template-columns:1fr}}
+.sec{border-top:1px solid var(--ln);padding:16px 0}.sec:first-child{border:0;padding-top:0}.kv{display:flex;justify-content:space-between;gap:12px;padding:5px 0;border-bottom:1px dotted var(--ln)}.kv span:first-child{color:var(--mu)}.kv span:last-child{text-align:right}.big{font:400 40px/1 var(--serif)}
+.err{color:var(--rd);font-size:12px;min-height:16px}.ok{color:#4a6b00}.bad{color:var(--rd)}.hist{border-left:2px solid var(--ln);padding-left:12px;margin:6px 0 10px}.hist div{padding-bottom:8px}
+input,textarea{font:inherit;background:#fff;color:var(--tx);border:1px solid var(--ln);border-radius:8px;padding:9px;width:100%}label{font-size:12px;color:var(--mu);display:block;margin:10px 0 4px}.g3{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:0;border:1px solid var(--ln);border-radius:10px;background:var(--pn)}.g3>div{padding:12px 14px;border:1px solid var(--ln);margin:-1px 0 0 -1px}
+#modal{position:fixed;inset:0;background:rgba(32,35,31,.55);z-index:5000;display:flex;align-items:center;justify-content:center;padding:16px}#modal[hidden]{display:none}.mbox{background:#fff;border-radius:12px;padding:22px;max-width:440px;width:100%}.mbox h3{font:400 24px var(--serif);margin:0 0 6px}
+#toasts{position:fixed;right:14px;bottom:14px;z-index:6000;display:flex;flex-direction:column;gap:8px}.toast{background:var(--tx);color:#fff;border-left:5px solid var(--li);padding:10px 14px;border-radius:8px;max-width:340px}.toast.bad{border-color:var(--rd)}.toast.info{border-color:var(--or)}.skel{color:var(--mu);padding:40px 0}
+@media(prefers-reduced-motion:no-preference){.st,button,tr.row{transition:background .15s,opacity .15s}}
+</style></head><body>
+<a class="skip" href="#app">Skip to content</a><div id="toasts" role="status" aria-live="polite"></div><div id="modal" hidden></div>
+<header><a href="#/" class="brand"><img src="/logo.svg" alt="">AeroSentinel</a>
+<nav id="nav" aria-label="Primary"><a href="#/" data-r="">Overview</a><a href="#/report" data-r="report">Report smoke</a><a href="#/architecture" data-r="architecture">Architecture</a><a href="#/status" data-r="status">System status</a></nav>
+<div class="hr"><span id="health" class="tag" role="status">Checking…</span><button class="ghost" onclick="refresh()">Refresh</button><button class="ghost" onclick="sync()">Sync live data</button><button class="o" onclick="demo()">Run demo scenario</button></div></header>
+<main id="app" tabindex="-1"><div class="skel">Loading…</div></main>
+<footer class="mu" style="text-align:center;padding:0 16px 28px;font-size:12px"><b>AI recommends. Cedar decides. Humans remain in the loop for verification.</b><br>Satellite hotspot ≠ proof of burning · Evidence score ≠ probability · Exposure ≠ medical assessment</footer>
+<script>
+const $=s=>document.querySelector(s),sleep=ms=>new Promise(r=>setTimeout(r,ms)),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const api=(u,m='GET',b)=>fetch('/api'+u,{method:m,headers:{'content-type':'application/json'},body:b&&JSON.stringify(b)}).then(async r=>{const j=await r.json();if(!r.ok)throw new Error(j.error||'Request failed');return j});
+const COL={SUSPECTED:'#F2673A',VERIFIED:'#C9F56A',REJECTED:'#C83D35',NEEDS_REVIEW:'#72766F'},LBL={SUSPECTED:'Suspected',VERIFIED:'Verified',REJECTED:'Rejected',NEEDS_REVIEW:'Needs review'};
+const ll=i=>[i.location.coordinates[1],i.location.coordinates[0]],fmt=t=>t?new Date(t).toLocaleString([],{dateStyle:'medium',timeStyle:'short'}):'—';
+const tag=s=>`<span class="tag ${s}">${LBL[s]||s}</span>`,pill=m=>`<span class="pill ${esc(m)}">${esc(m)}</span>`,nice=t=>String(t).replace(/_/g,' ').toLowerCase();
+const dlabel=l=>{const s=new Set(l.flatMap(i=>i.evidence.map(e=>e.sourceStatus)));return s.has('LIVE')&&s.has('DEMO')?'MIXED live + demo':s.has('LIVE')?'LIVE':s.has('DEMO')?'DEMO (seeded)':'USER-SUBMITTED'};
+let map=null,ALL=[],LOCS=[],INC=null,SEL=null,FIL='ALL',G={};
+function view(h){if(map){map.remove();map=null}$('#app').innerHTML=h}
+function toast(m,k='ok'){const t=document.createElement('div');t.className='toast '+k;t.textContent=m;$('#toasts').appendChild(t);setTimeout(()=>t.remove(),k==='bad'?6500:3600)}
+
+
+function mkMap(center, zoom) {
+  map = L.map('map').setView(center, zoom);
+
+  const attribution =
+    '&copy; <a href="https://www.openstreetmap.org/copyright" ' +
+    'target="_blank" rel="noopener noreferrer">' +
+    'OpenStreetMap contributors</a>';
+
+  let tileErrors = 0;
+
+  const note = L.control({ position: 'bottomright' });
+
+  note.onAdd = () => {
+    const el = L.DomUtil.create('div', 'mapmsg');
+    el.setAttribute('role', 'status');
+    el.setAttribute('aria-live', 'polite');
+    el.textContent = 'Loading map tiles...';
+    return el;
+  };
+
+  note.addTo(map);
+
+  const message = note.getContainer();
+
+  const showMessage = (text) => {
+    message.style.display = 'block';
+    message.textContent = text;
+  };
+
+  const tileLayer = L.tileLayer(
+    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    {
+      maxZoom: 19,
+      attribution
+    }
+  );
+
+  // Start a fresh error count whenever a new batch of tiles loads.
+  tileLayer.on('loading', () => {
+    tileErrors = 0;
+    showMessage('Loading map tiles...');
+  });
+
+  // Keep the warning visible if any tiles fail during this batch.
+  tileLayer.on('tileerror', () => {
+    tileErrors++;
+
+    showMessage(
+      'Some map tiles could not load. Check your connection.'
+    );
+  });
+
+  // Hide the message only when the batch finishes without errors.
+  tileLayer.on('load', () => {
+    if (tileErrors === 0) {
+      message.style.display = 'none';
+    } else {
+      showMessage(
+        'Some map tiles could not load. Check your connection.'
+      );
+    }
+  });
+
+  tileLayer.addTo(map);
+
+  return map;
+}
+
+const mk=(i,r)=>L.circleMarker(ll(i),{radius:r,color:'#20231F',weight:1.5,fillColor:COL[i.status],fillOpacity:.95});
+const locMk=l=>L.circleMarker([l.lat,l.lng],{radius:5,color:'#20231F',weight:2,fillColor:'#fff',fillOpacity:1}).bindTooltip(l.type.replace('_',' ').toLowerCase()+': '+l.name+' (seeded demo registry)');
+const legend=`<div class="legend" aria-label="Map legend">${Object.keys(COL).map(k=>`<span><i class="dot" style="background:${COL[k]}"></i>${LBL[k]}</span>`).join('')}<span><i class="dot" style="background:#fff"></i>Sensitive location (demo registry)</span></div>`;
+
+/* ---------- Dashboard ---------- */
+const fm=(i,f)=>f==='ALL'||(f==='AWAIT'&&['SUSPECTED','NEEDS_REVIEW'].includes(i.status))||i.status===f;
+function drawDash(){const l=ALL.filter(i=>fm(i,FIL));G.inc.clearLayers();l.forEach(i=>mk(i,10).addTo(G.inc).bindTooltip(i.incidentId+' · '+LBL[i.status]).on('click',()=>location.hash='#/incident/'+i.incidentId));
+$('#tbl').innerHTML=l.length?l.map(i=>`<tr class="row" tabindex="0" onkeydown="if(event.key==='Enter')location.hash='#/incident/${i.incidentId}'" onclick="location.hash='#/incident/${i.incidentId}'"><td><b>${i.incidentId}</b><td>${tag(i.status)}<td>${ll(i).map(x=>x.toFixed(3)).join(', ')}<td>${fmt(i.detectedAt)}<td>${i.evidenceScore}/100<td>${i.exposure?.level||'—'}<td><a href="#/incident/${i.incidentId}">Investigate →</a></tr>`).join(''):'<tr><td colspan="7" class="mu">No incidents match this filter.</tr>';
+document.querySelectorAll('[data-f]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.f===FIL)))}
+function filt(f){FIL=f;drawDash()}
+function fit(){const l=ALL.filter(i=>fm(i,FIL));if(l.length)map.fitBounds(l.map(ll),{padding:[50,50],maxZoom:13})}
+async function dash(){const[d,locs,s]=await Promise.all([api('/incidents'),api('/locations'),api('/status')]);ALL=d;LOCS=locs;FIL='ALL';
+const n=f=>d.filter(i=>fm(i,f)).length,adv=d.filter(i=>i.advisory?.status==='ISSUED'),hi=d.filter(i=>i.exposure?.level==='HIGH').length;
+const acts=d.flatMap(i=>(i.decisions||[]).map(x=>({...x,id:i.incidentId}))).sort((a,b)=>b.decidedAt.localeCompare(a.decidedAt)).slice(0,6);
+view(`<section class="hero"><div><p class="eyebrow">Environmental operations · ${dlabel(d)} data</p><h1 class="title">Smoke, verified<i>.</i></h1><p class="lead">Satellite hotspots, ground air quality and community reports, fused into a human-verified, policy-controlled response to suspected agricultural burning.</p></div><p class="rule">No single signal is truth. A person verifies, Cedar authorizes.</p></section>
+<div class="strip"><div><b>${n('AWAIT')}</b><small>Awaiting verification</small></div><div><b>${n('VERIFIED')}</b><small>Verified</small></div><div><b>${n('REJECTED')}</b><small>Rejected</small></div><div><b>${hi}</b><small>High exposure</small></div><div><b>${adv.length}</b><small>Active advisories</small></div></div>
+<div class="mapwrap"><div id="map" class="map"></div><div class="badge">Incident data: ${dlabel(d)}</div><div class="float tr" role="group" aria-label="Map filters">${[['ALL','All'],['AWAIT','Awaiting'],['VERIFIED','Verified'],['REJECTED','Rejected']].map(f=>`<button class="chip" data-f="${f[0]}" onclick="filt('${f[0]}')">${f[1]}</button>`).join('')}<button class="chip" onclick="fit()">Fit all</button></div>${legend}</div>
+<div class="cols"><section><h2>Incidents</h2><div class="tw"><table><tr><th>Incident<th>Status<th>Location<th>Detected<th>Evidence<th>Exposure<th></tr><tbody id="tbl"></tbody></table></div></section>
+<aside><h2>Recent verification activity</h2>${acts.length?`<div class="hist">${acts.map(a=>`<div><b>${a.id}</b> ${tag(a.status)}<br><small>${fmt(a.decidedAt)} · ${esc(a.reason||'no reason given')}</small></div>`).join('')}</div>`:'<p class="mu">No decisions recorded yet. Seeded incidents carry a demo status without history; decisions you make appear here.</p>'}
+<h2 style="margin-top:22px">Active advisories</h2>${adv.map(i=>`<div><a href="#/advisory/${i.incidentId}">${esc(i.advisory.title)}</a> <small>${i.incidentId}</small></div>`).join('')||'<p class="mu">None issued.</p>'}
+<h2 style="margin-top:22px">Data sources</h2>${s.sources.map(x=>`<div class="kv"><span>${esc(x.name)}</span><span>${srcPill(x)}</span></div>`).join('')}</aside></div>`);
+const m=mkMap([30.92,75.88],11);G.loc=L.layerGroup().addTo(m);G.inc=L.layerGroup().addTo(m);locs.forEach(l=>locMk(l).addTo(G.loc));drawDash();fit()}
+
+/* ---------- Incident ---------- */
+function stages(i){const ev=i.evidence.length>0,v=i.status,ex=!!i.exposure,rc=!!i.recommendation,po=i.policy,ad=i.advisory?.status;
+return[['DETECT',ev?'done':'pending'],['FUSE',ev?'done':'pending'],['VERIFY',v==='VERIFIED'?'done':v==='REJECTED'?'failed':'cur'],['ASSESS',ex?'done':v==='VERIFIED'?'cur':'pending'],['RECOMMEND',rc?'done':ex?'cur':'pending'],['AUTHORIZE',po?(po.decision==='ALLOW'?'done':'failed'):rc?'cur':'pending'],['ADVISE',ad==='ISSUED'?'done':ad==='BLOCKED'?'failed':'pending']]}
+const SL={done:'Completed',cur:'Current',pending:'Pending',failed:'Failed'},SI={done:'✓',cur:'●',pending:'',failed:'✕'};
+function stageBox(k){const i=INC,id=i.incidentId,A=(t,f)=>`<button class="o" onclick="${f}">${t}</button>`;let h='';
+if(k==='DETECT'){const e=i.evidence.filter(x=>['SATELLITE_HOTSPOT','ANALYST_ENTRY'].includes(x.type));h=e.length?e.map(x=>`<div>${esc(x.detail)} ${pill(x.sourceStatus)}<br><small>${esc(x.source)} · ${fmt(x.timestamp)}</small></div>`).join(''):'<span class="mu">No satellite detection is recorded for this incident.</span>'}
+if(k==='FUSE')h=i.evidence.map(x=>`<div class="kv"><span>${esc(nice(x.type))} ${pill(x.sourceStatus)}</span><span>+${x.pts}</span></div>`).join('')+`<div class="kv"><span><b>Evidence Score</b> (heuristic, not a probability)</span><span><b>${i.evidenceScore}/100</b></span></div>`;
+if(k==='VERIFY')h=`Status: ${tag(i.status)} ${i.status==='NEEDS_REVIEW'?'More evidence was requested.':i.status==='SUSPECTED'?'A human reviewer has not decided yet.':''} <a href="#decision" onclick="event.preventDefault();$('#decision').scrollIntoView({behavior:'smooth'});$('#decision').focus()">Open reviewer panel</a>`;
+if(k==='ASSESS')h=i.exposure?`Exposure <b>${i.exposure.level}</b> (calculated). ${i.exposure.nearby.length} sensitive location(s) within 3 km.`:i.status==='VERIFIED'?'Ready to assess. '+A('Assess nearby exposure',`step('${id}','exposure')`):'<span class="mu">Available only after human verification.</span>';
+if(k==='RECOMMEND')h=i.recommendation?`<b>${esc(i.recommendation.title)}</b><br>${esc(i.recommendation.message)}<br><small>${esc(i.recommendation.mode)} · a draft, not an advisory</small>`:i.exposure?'Ready. '+A('Generate recommendation',`step('${id}','advisory')`):'<span class="mu">Requires verification and exposure assessment.</span>';
+if(k==='AUTHORIZE')h=i.policy?`Cedar: <b class="${i.policy.decision==='ALLOW'?'ok':'bad'}">${i.policy.decision==='ALLOW'?'ALLOWED':'BLOCKED'}</b>. ${esc(i.policy.reason)}<br><small>Engine: ${esc(i.policy.engine)}</small>`:i.recommendation?'Ready. '+A('Run Cedar policy',`step('${id}','policy-check')`):'<span class="mu">Runs after an AI recommendation.</span>';
+if(k==='ADVISE'){const a=i.advisory?.status;h=a==='ISSUED'?`Advisory <b class="ok">ISSUED</b>. <a href="#/advisory/${id}">View public advisory →</a>`:a==='BLOCKED'?'<b class="bad">Blocked</b> by policy. No advisory was issued.':'<span class="mu">No advisory decision yet.</span>'}
+$('#sbox').innerHTML=`<h3 class="k">${k} · ${SL[stages(i).find(s=>s[0]===k)[1]]}</h3>${h}`;SEL=k;document.querySelectorAll('.st').forEach(b=>b.classList.toggle('sel',b.dataset.k===k))}
+function pickStage(k){stageBox(k)}
+function togg(n,on){on?map.addLayer(G[n]):map.removeLayer(G[n])}
+async function incident(id){const[i,all,locs]=await Promise.all([api('/incidents/'+id),api('/incidents'),api('/locations')]);INC=i;ALL=all;const S=stages(i),cur=(S.find(s=>s[1]==='cur')||S.find(s=>s[1]==='failed')||S[6])[0];
+
+const dec = i.decisions || [];
+const last = dec[dec.length - 1];
+const ev = i.evidence || [];
+
+const signalTypes = new Set(
+  ev
+    .filter(e =>
+      ['SATELLITE_HOTSPOT', 'GROUND_AQI', 'COMMUNITY_REPORT'].includes(e.type)
+    )
+    .map(e => e.type)
+);
+
+const types = signalTypes.size;
+const aq = ev.find(e => e.type === 'GROUND_AQI');
+
+const prov=e=>e?(e.sourceStatus==='LIVE'?'sourced':e.sourceStatus==='DEMO'?'simulated':'measured'):'';
+const fu=i.status!=='VERIFIED'?'Collect corroborating evidence before verification.':!i.exposure?'Assess nearby exposure.':i.exposure.level==='HIGH'?'Prepare an advisory; prioritise schools and residential areas.':'Monitor AQI and re-assess if readings change.';
+view(`<div class="crumb"><a href="#/">Overview</a> / Incidents / ${id}</div>
+<div class="ih"><div><h1>${id}</h1><p style="margin:0 0 4px">${tag(i.status)} &nbsp;${esc(nice(i.incidentType))} · ${ev.length} evidence item(s) · score ${i.evidenceScore}/100${i.groundAQI!=null?' · ground AQI '+i.groundAQI:''}</p><small>Reported location ${ll(i).map(x=>x.toFixed(4)).join(', ')} · detected ${fmt(i.detectedAt)}</small></div><button class="o" onclick="$('#decision').scrollIntoView({behavior:'smooth'});$('#decision').focus()">Review the evidence</button></div>
+<div class="tl" role="group" aria-label="Workflow">${S.map(s=>`<button class="st ${s[1]}" data-k="${s[0]}" onclick="pickStage('${s[0]}')" aria-label="${s[0]}: ${SL[s[1]]}"><span class="ic">${SI[s[1]]}</span><b>${s[0]}</b><small>${SL[s[1]]}</small></button>`).join('')}</div><div id="sbox" class="sbox" aria-live="polite"></div>
+<div class="ws"><div><div class="mapwrap sm"><div id="map" class="map"></div><div class="badge">Incident data: ${dlabel([i])} · basemap: real tiles</div><div class="float tr"><label class="chip"><input type="checkbox" checked style="width:auto" onchange="togg('o',this.checked)">Other incidents</label><label class="chip"><input type="checkbox" checked style="width:auto" onchange="togg('l',this.checked)">Sensitive locations</label><button class="chip" onclick="map.setView(${JSON.stringify(ll(i))},14)">Recenter</button><button class="chip" onclick="locate2()">My location</button></div>${legend}</div></div>
+<div><div class="sec"><h3 class="k">Evidence summary</h3><div class="big">${i.evidenceScore}<small>/100</small></div><small>Evidence Score: application heuristic, not a probability</small>
+${ev.map(e=>`<div class="kv"><span>${esc(nice(e.type))} ${pill(e.sourceStatus)}</span><span>+${e.pts}</span></div>`).join('')}<p style="margin:8px 0 0"><b>Evidence quality:</b> ${types} of 3 independent signal types (satellite, ground AQI, community). <small>A hotspot alone is possible evidence only; more signal types reduce, but do not remove, uncertainty.</small></p></div>
+<div class="sec" id="decision" tabindex="-1"><h3 class="k">Reviewer decision</h3><div class="kv"><span>Current status</span><span>${tag(i.status)}</span></div>
+${last?`<div class="kv"><span>Latest decision</span><span>${esc(LBL[last.status])} · ${fmt(last.decidedAt)}</span></div><div class="kv"><span>Reviewer</span><span>${esc(last.reviewer)}</span></div><div class="kv"><span>Reason</span><span>${esc(last.reason||'none given')}</span></div>`:`<p class="mu" style="margin:6px 0">No decision recorded for this incident${i.status==='SUSPECTED'?'; awaiting a human reviewer':' (seeded demo status, no history)'}.</p>`}
+<div style="margin:8px 0"><button class="l" onclick="ask('${id}','VERIFY')">Verify incident</button><button class="o" onclick="ask('${id}','REJECT')">Reject</button><button class="ghost" onclick="ask('${id}','MORE_EVIDENCE')">Need more evidence</button></div><small>The AI never makes this decision.</small>
+${dec.length>1?`<div class="hist">${dec.slice(0,-1).reverse().map(x=>`<div>${tag(x.status)} <small>${fmt(x.decidedAt)} · ${esc(x.reason||'no reason')}</small></div>`).join('')}</div>`:''}</div>
+
+<div class="sec">
+  <h3 class="k">Exposure assessment</h3>
+
+  ${i.exposure ? `
+    <div class="kv">
+      <span>Exposure level</span>
+      <span>
+        <b>${esc(i.exposure.level === 'UNKNOWN'
+          ? 'Not available'
+          : i.exposure.level)}</b>
+        ${pill(i.exposure.level === 'UNKNOWN'
+          ? 'unavailable'
+          : 'calculated')}
+      </span>
+    </div>
+
+    ${(i.exposure.nearby || []).map(n => `
+      <div class="kv">
+        <span>${esc(n.name)}</span>
+        <span>${esc(String(n.distanceKm))} km ${pill('calculated')}</span>
+      </div>
+    `).join('')}
+
+    ${i.exposure.note
+      ? `<p class="mu">${esc(i.exposure.note)}</p>`
+      : ''}
+  ` : `
+    <p class="mu" style="margin:0">
+      Exposure assessment is not available yet.
+    </p>
+  `}
+
+  <div class="kv">
+    <span>Affected area</span>
+    <span class="mu">Not estimated</span>
+  </div>
+
+  <div class="kv">
+    <span>Wind speed and direction</span>
+    <span>
+      ${i.weather &&
+        i.weather.windSpeedKmh != null &&
+        Number.isFinite(Number(i.weather.windSpeedKmh))
+        ? esc(Number(i.weather.windSpeedKmh).toFixed(1) +
+            ' km/h · ' +
+            (i.weather.windDirectionCardinal || 'direction unavailable'))
+        : 'Not available'}
+      ${i.weather?.freshness ? pill(i.weather.freshness) : ''}
+    </span>
+  </div>
+
+  <div class="kv">
+    <span>Temperature</span>
+    <span>
+      ${i.weather &&
+        i.weather.temperatureC != null &&
+        Number.isFinite(Number(i.weather.temperatureC))
+        ? esc(Number(i.weather.temperatureC).toFixed(1) + ' °C')
+        : 'Not available'}
+    </span>
+  </div>
+
+  <small>
+    Exposure estimates depend on available observations.
+    Affected area and health exposure are not calculated by this display.
+  </small>
+</div>
+
+<div class="kv">
+  <span>Affected area</span>
+  <span class="mu">Unavailable — plume dispersion data required</span>
+</div>
+  <span>Wind speed and direction</span>
+  <span>
+    ${i.weather && i.weather.windSpeedKmh != null && Number.isFinite(Number(i.weather.windSpeedKmh))
+      ? esc(Number(i.weather.windSpeedKmh).toFixed(1) + ' km/h · ' + (i.weather.windDirectionCardinal || 'direction unavailable'))
+      : 'Not available'}
+    ${i.weather?.freshness ? pill(i.weather.freshness) : ''}
+  </span>
+</div>
+<div class="kv">
+  <span>Temperature</span>
+  <span>${i.weather && i.weather.temperatureC != null && Number.isFinite(Number(i.weather.temperatureC))
+    ? esc(Number(i.weather.temperatureC).toFixed(1) + ' °C')
+    : 'Not available'}</span>
+</div>
+<div class="kv">
+  <span>Humidity</span>
+  <span>${i.weather && i.weather.relativeHumidityPercent != null && Number.isFinite(Number(i.weather.relativeHumidityPercent))
+    ? esc(String(i.weather.relativeHumidityPercent) + '%')
+    : 'Not available'}</span>
+</div>
+<div class="kv">
+  <span>Wind gusts</span>
+  <span>${i.weather && i.weather.windGustsKmh != null && Number.isFinite(Number(i.weather.windGustsKmh))
+    ? esc(Number(i.weather.windGustsKmh).toFixed(1) + ' km/h')
+    : 'Not available'}</span>
+</div>
+
+<div class="kv">
+  <span>Precipitation</span>
+  <span>${i.weather && i.weather.precipitationMm != null && Number.isFinite(Number(i.weather.precipitationMm))
+    ? esc(String(i.weather.precipitationMm) + ' mm')
+    : 'Not available'}</span>
+</div>
+
+<div style="margin-top:8px">
+  <button class="ghost" onclick="loadIncidentWeather('${id}')">Refresh weather</button>
+</div>
+<small>Weather-model data, not a direct local wind-sensor measurement. Unavailable values are not estimated.</small><div class="kv"><span>Population exposed</span><span class="mu">Not available (no population data)</span></div>
+<p style="margin:8px 0 0"><b>Follow-up:</b> ${fu}</p><small>Indicative only; not a medical exposure model.${i.exposure?' '+esc(i.exposure.note):''}</small></div>
+<div class="sec"><h3 class="k">AI recommendation · draft</h3>${i.recommendation?`<b>${esc(i.recommendation.title)}</b><p style="margin:4px 0">${esc(i.recommendation.message)}</p><small>${esc(i.recommendation.reasoning)}<br>${esc(i.recommendation.mode)}</small>`:'<p class="mu" style="margin:0">None yet.</p>'}</div></div></div>`);
+const m=mkMap(ll(i),13);G.o=L.layerGroup().addTo(m);G.l=L.layerGroup().addTo(m);G.x=L.layerGroup().addTo(m);
+all.filter(x=>x.incidentId!==id).forEach(x=>mk(x,6).addTo(G.o).bindTooltip(x.incidentId+' · '+LBL[x.status]).on('click',()=>location.hash='#/incident/'+x.incidentId));
+locs.forEach(l=>locMk(l).addTo(G.l));(i.exposure?.nearby||[]).forEach(n=>L.polyline([ll(i),[n.lat,n.lng]],{color:'#F2673A',dashArray:'4 4',weight:1.5}).addTo(G.x));mk(i,13).addTo(m).bindTooltip(id+' (selected)');
+stageBox(SEL&&S.find(s=>s[0]===SEL)&&INC.incidentId===window._last?SEL:cur);window._last=id}
+async function loadIncidentWeather(id) {
+  try {
+    const result = await api(
+      '/incidents/' + encodeURIComponent(id) + '/weather',
+      'POST'
+    );
+
+    if (result.weather && result.weather.freshness === 'CURRENT') {
+      toast('Live weather refreshed');
+    } else {
+      toast('Weather returned, but its data may be stale', 'info');
+    }
+
+    await route();
+  } catch (error) {
+    toast(error.message || 'Weather is unavailable', 'bad');
+  }
+}
+function locate2(){navigator.geolocation?navigator.geolocation.getCurrentPosition(p=>{L.circleMarker([p.coords.latitude,p.coords.longitude],{radius:6,color:'#20231F'}).addTo(map);map.setView([p.coords.latitude,p.coords.longitude],13)},()=>toast('Location unavailable','bad')):toast('Geolocation not supported','bad')}
+
+/* ---------- Decisions (confirmation dialog) ---------- */
+const DT={VERIFY:['Verify this incident','Confirms the evidence is sufficient. This unlocks exposure assessment and an advisory recommendation.',false,'l'],REJECT:['Reject this incident','Marks the incident as not agricultural burning or not credible. Any exposure, recommendation and advisory state is cleared.',true,'o'],MORE_EVIDENCE:['Request more evidence','Keeps the incident under review and blocks advisories until more evidence is added.',true,'']};
+function ask(id,a){const T=DT[a];$('#modal').innerHTML=`<div class="mbox" role="dialog" aria-modal="true" aria-labelledby="mt"><h3 id="mt">${T[0]}</h3><p>${T[1]}</p><label for="mreason">Reason ${T[2]?'(required)':'(optional)'}</label><textarea id="mreason" rows="3" maxlength="300"></textarea><div id="merr" class="err" role="alert"></div><div style="text-align:right"><button class="ghost" onclick="closeM()">Cancel</button><button class="${T[3]}" id="mgo" onclick="decide('${id}','${a}')">Confirm</button></div></div>`;$('#modal').hidden=false;$('#mreason').focus()}
+function closeM(){$('#modal').hidden=true;$('#modal').innerHTML=''}
+async function decide(id,a){const r=$('#mreason').value.trim();if(DT[a][2]&&!r){$('#merr').textContent='Please give a reason.';return}$('#mgo').disabled=true;
+try{await api(`/incidents/${id}/verify`,'PATCH',{action:a,reason:r});closeM();toast('Decision recorded: '+LBL[{VERIFY:'VERIFIED',REJECT:'REJECTED',MORE_EVIDENCE:'NEEDS_REVIEW'}[a]]);SEL=null;await route()}catch(e){$('#merr').textContent=e.message;$('#mgo').disabled=false}}
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#modal').hidden)closeM()});$('#modal').addEventListener('click',e=>{if(e.target.id==='modal')closeM()});
+
+/* ---------- Other pages ---------- */
+const srcPill=x=>pill(x.mode==='DEMO'&&x.reason&&!/DATA_MODE|not fetched/.test(x.reason)?'UNAVAILABLE':x.mode)+(x.mode==='LIVE'&&x.updated&&Date.now()-Date.parse(x.updated)>216e5?' <span class="pill">STALE</span>':'');
+async function advisory(id){const i=await api('/incidents/'+id),a=i.advisory;
+view(`<div class="crumb"><a href="#/">Overview</a> / <a href="#/incident/${id}">${id}</a> / Advisory</div><h1 class="title" style="font-size:48px">Advisory</h1><div style="max-width:680px;margin-top:18px">${a?.status==='ISSUED'?`<p>${tag('VERIFIED')} <b class="ok">ISSUED</b> · ${fmt(a.issuedAt)}</p><h2>${esc(a.title)}</h2><p>${esc(a.message)}</p><ul>${a.precautions.map(p=>'<li>'+esc(p)+'</li>').join('')}</ul><small>Evidence ${i.evidenceScore}/100 · exposure ${i.exposure.level} (indicative). Drafted by AI (${esc(a.mode)}), authorized by Cedar, incident verified by a human. It does not accuse any person.</small>`:a?.status==='BLOCKED'?`<p><b class="bad">BLOCKED</b> by Cedar: ${esc(i.policy.reason)}</p><small>Human verification, HIGH exposure and the evidence threshold are all required.</small>`:'<p class="mu">No advisory decision yet. An AI recommendation is only a draft until Cedar authorizes it.</p>'}</div>`)}
+async function status(){const[s,h]=await Promise.all([api('/status'),api('/health')]);
+view(`<p class="eyebrow">System</p><h1 class="title" style="font-size:48px">Status</h1><div class="cols"><section><h2>Data sources</h2><table><tr><th>Source<th>Provider<th>Mode<th>Updated</tr>${s.sources.map(x=>`<tr><td>${esc(x.name)}<td>${esc(x.source)}${x.reason?` <small>(${esc(x.reason)})</small>`:''}<td>${srcPill(x)}<td>${x.updated?fmt(x.updated):'—'}</tr>`).join('')}</table><small>API ${h.ok?'reachable':'down'} · advisory evidence threshold ${s.threshold}. Demo data is never presented as live.</small></section>
+<aside><h2>Integrations</h2>${(s.integrations||[]).map(x=>`<div class="kv"><span>${esc(x.name)}</span><span>${esc(x.state)}</span></div>`).join('')}<small>"Configured" means settings are present, not that the service has answered.</small></aside></div>`)}
+function arch(){const R=[['Express API','Workflow, scoring, endpoints'],['Strands agent','Drafts a recommendation only'],['Amazon Bedrock','Model behind the agent'],['NASA FIRMS','Satellite hotspot evidence'],['OpenAQ','Ground PM2.5 context'],['MongoDB','Incidents, 2dsphere $near'],['Cedar','Allow or deny an advisory'],['Lambda + API Gateway','Serverless API (SAM template)'],['S3 + CloudFront','Site hosting, evidence photos'],['CloudWatch','Logs and error alarm']],P=[['DETECT','FIRMS · OpenAQ · citizens'],['FUSE','Evidence Score'],['VERIFY','Human reviewer'],['ASSESS','Geospatial rules'],['RECOMMEND','Strands + Bedrock'],['AUTHORIZE','Cedar'],['ADVISE','Public advisory']];
+view(`<p class="eyebrow">How it works</p><h1 class="title" style="font-size:48px">Architecture</h1><div class="tl" style="margin:22px 0">${P.map(p=>`<div class="st ${p[0]==='VERIFY'?'cur':p[0]==='AUTHORIZE'?'done':''}"><b>${p[0]}</b><small>${p[1]}</small></div>`).join('')}</div><div class="g3">${R.map(r=>`<div><b>${r[0]}</b><br><small>${r[1]}</small></div>`).join('')}</div><p class="mu">Orange = the human decision, lime = the policy decision. Live configured state per integration is on the System status page; AWS hosting resources are defined in <code>infrastructure/template.yaml</code> and their deployment cannot be detected by this app.</p>`)}
+function report(){view(`<p class="eyebrow">Community</p><h1 class="title" style="font-size:48px">Report smoke</h1><div style="max-width:560px;margin-top:18px"><p class="mu">Reports are corroborating evidence only and are never auto-verified.</p><label for="rlat">Latitude</label><input id="rlat" value="30.90" inputmode="decimal"><label for="rlng">Longitude</label><input id="rlng" value="75.86" inputmode="decimal"><button class="ghost" type="button" onclick="locate()" style="margin-top:6px">Use my location</button><label for="rdesc">What did you see?</label><textarea id="rdesc" rows="3" maxlength="500" placeholder="Smoke, flames, direction"></textarea><label for="rphoto">Photo (optional)</label><input type="file" id="rphoto" accept="image/*"><div style="margin-top:12px"><button class="o" id="rbtn" onclick="sendReport()">Submit report</button></div><div id="rmsg" aria-live="polite"></div></div>`)}
+function locate(){navigator.geolocation?navigator.geolocation.getCurrentPosition(p=>{$('#rlat').value=p.coords.latitude.toFixed(5);$('#rlng').value=p.coords.longitude.toFixed(5)},()=>toast('Location unavailable','bad')):toast('Geolocation not supported','bad')}
+
+async function sendReport() {
+  const b = $('#rbtn');
+  const m = $('#rmsg');
+
+  const latValue = $('#rlat').value.trim();
+  const lngValue = $('#rlng').value.trim();
+  const description = $('#rdesc').value.trim();
+
+  // Validate coordinates.
+  const lat = Number(latValue);
+  const lng = Number(lngValue);
+
+  if (
+    !latValue ||
+    !lngValue ||
+    !Number.isFinite(lat) ||
+    !Number.isFinite(lng) ||
+    Math.abs(lat) > 90 ||
+    Math.abs(lng) > 180
+  ) {
+    m.innerHTML =
+      '<p class="err" role="alert">' +
+      'Enter a valid latitude and longitude.' +
+      '</p>';
+    return;
+  }
+
+  // Validate the report description.
+  if (!description || description.length > 500) {
+    m.innerHTML =
+      '<p class="err" role="alert">' +
+      'Describe what you saw (1–500 characters).' +
+      '</p>';
+    return;
+  }
+
+  const fileInput = $('#rphoto');
+  const file = fileInput.files[0];
+
+  // Compress the image and return a complete JPEG data URL.
+  async function compressPhoto(file) {
+    if (!file.type.startsWith('image/')) {
+      throw new Error('Please select a valid image file.');
+    }
+
+    let bitmap;
+
+    try {
+      bitmap = await createImageBitmap(file);
+    } catch {
+      throw new Error(
+        'Could not read this image. Please choose another photo.'
+      );
+    }
+
+    try {
+      const originalWidth = bitmap.width;
+      const originalHeight = bitmap.height;
+
+      if (!originalWidth || !originalHeight) {
+        throw new Error('The selected image has invalid dimensions.');
+      }
+
+      const attempts = [
+        { maxDimension: 1280, quality: 0.76 },
+        { maxDimension: 1024, quality: 0.70 },
+        { maxDimension: 800, quality: 0.65 },
+        { maxDimension: 640, quality: 0.60 }
+      ];
+
+      for (const attempt of attempts) {
+        const scale = Math.min(
+          1,
+          attempt.maxDimension /
+            Math.max(originalWidth, originalHeight)
+        );
+
+        const width = Math.max(
+          1,
+          Math.round(originalWidth * scale)
+        );
+
+        const height = Math.max(
+          1,
+          Math.round(originalHeight * scale)
+        );
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+
+        const context = canvas.getContext('2d');
+
+        if (!context) {
+          throw new Error('Could not prepare the photo.');
+        }
+
+        // Fill white behind transparent images before JPEG conversion.
+        context.fillStyle = '#ffffff';
+        context.fillRect(0, 0, width, height);
+        context.drawImage(bitmap, 0, 0, width, height);
+
+        const blob = await new Promise((resolve, reject) => {
+          canvas.toBlob(
+            result => {
+              if (result) {
+                resolve(result);
+              } else {
+                reject(new Error('Could not compress the photo.'));
+              }
+            },
+            'image/jpeg',
+            attempt.quality
+          );
+        });
+
+        // Leave room for the remaining JSON request data.
+        const maxBase64Length = 4.5 * 1024 * 1024;
+
+        if (blob.size * 4 / 3 <= maxBase64Length) {
+          const dataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => {
+              reject(
+                new Error('Could not read the compressed photo.')
+              );
+            };
+
+            reader.readAsDataURL(blob);
+          });
+
+          // IMPORTANT: preserve the data:image/jpeg;base64, prefix.
+          return {
+            data: String(dataUrl),
+            name: file.name.replace(/\.[^.]+$/, '') + '.jpg',
+            size: blob.size
+          };
+        }
+
+        canvas.width = 0;
+        canvas.height = 0;
+      }
+
+      throw new Error(
+        'This photo is still too large after compression. ' +
+        'Please choose a smaller image.'
+      );
+    } finally {
+      bitmap.close();
+    }
+  }
+
+  b.disabled = true;
+  b.textContent = 'Preparing photo…';
+  m.innerHTML = '';
+
+  try {
+    let photo = null;
+    let photoName = null;
+
+    // A photo is optional.
+    if (file) {
+      const compressed = await compressPhoto(file);
+
+      photo = compressed.data;
+      photoName = compressed.name;
+
+      m.innerHTML =
+        '<p class="mu">Photo compressed to ' +
+        (compressed.size / 1024).toFixed(0) +
+        ' KB. Submitting report…</p>';
+    }
+
+    b.textContent = 'Submitting…';
+
+    const result = await api('/reports', 'POST', {
+      lat: latValue,
+      lng: lngValue,
+      description,
+      timestamp: new Date().toISOString(),
+      photo,
+      photoName
+    });
+
+    m.innerHTML = `
+      <div class="sec">
+        <h3 class="k">Confirmation</h3>
+        <p class="ok"><b>${esc(result.message)}</b></p>
+
+        <div class="kv">
+          <span>Linked incident</span>
+          <span>
+            <a href="#/incident/${encodeURIComponent(result.incidentId)}">
+              ${esc(result.incidentId)}
+            </a>
+          </span>
+        </div>
+
+        <div class="kv">
+          <span>Status</span>
+          <span>${tag(result.status)}</span>
+        </div>
+
+        <div class="kv">
+          <span>Photo</span>
+          <span>
+            ${result.photo ? esc(result.photo.storage) : 'None'}
+          </span>
+        </div>
+      </div>
+    `;
+
+    toast('Report received successfully.');
+  } catch (error) {
+    m.innerHTML =
+      '<p class="err" role="alert">' +
+      esc(error.message || 'Could not submit the report.') +
+      '</p>';
+
+    toast(error.message || 'Report submission failed.', 'bad');
+  } finally {
+    b.disabled = false;
+    b.textContent = 'Submit report';
+  }
+}
+/* ---------- Shell ---------- */
+async function health(){const el=$('#health');try{const[h,s]=await Promise.all([api('/health'),api('/status')]);const live=s.sources.some(x=>x.mode==='LIVE'&&!['Community reports','Database'].includes(x.name)),bad=s.sources.some(x=>/unreachable/.test(x.source));el.textContent=bad?'Degraded · database unreachable':live?'Operational · live data':'Operational · demo data';el.style.cssText=bad?'background:#fff;border-color:#C83D35;color:#C83D35':'background:#C9F56A;border-color:#C9F56A'}catch(e){el.textContent='API unreachable';el.style.cssText='background:#C83D35;border-color:#C83D35;color:#fff'}}
+async function refresh(){toast('Refreshing…','info');await route();toast('Up to date')}
+
+async function step(id, s) {
+  const messages = {
+    exposure: 'Assessing exposure…',
+    advisory: 'Asking the agent for a recommendation…',
+    'policy-check': 'Evaluating Cedar policy…'
+  };
+
+  toast(messages[s] || 'Processing…', 'info');
+
+  try {
+    const updated = await api(`/incidents/${id}/${s}`, 'POST');
+
+    // Keep the latest server response available to the incident view.
+    if (updated && updated.incidentId === id) {
+      INC = updated;
+    }
+
+    SEL = null;
+    await route();
+
+    if (s === 'advisory' && updated?.recommendation) {
+      toast('Draft recommendation generated');
+    }
+  } catch (e) {
+    toast(e.message, 'bad');
+  }
+}
+
+async function sync(){try{const r=await api('/live/sync','POST');toast('Created '+r.created.length+' incident(s) from '+r.hotspotsSeen+' live hotspots');await route()}catch(e){toast(e.message,'bad')}}
+async function demo(){try{await api('/reset','POST');SEL=null;location.hash='#/incident/INC-001';await route();for(const[u,m,b]of[['verify','PATCH',{action:'VERIFY',reason:'Demo scenario: satellite, AQI and community evidence agree'}],['exposure','POST'],['advisory','POST'],['policy-check','POST']]){await sleep(1800);SEL=null;await api('/incidents/INC-001/'+u,m,b);await route()}toast('Demo scenario complete')}catch(e){toast(e.message,'bad')}}
+async function route(){const p=location.hash.replace(/^#\/?/,'').split('/');if(p[0]==='decision')return;
+document.querySelectorAll('#nav a').forEach(a=>{a.dataset.r===(['incident','advisory'].includes(p[0])?'':p[0])?a.setAttribute('aria-current','page'):a.removeAttribute('aria-current')});
+const t={'':dash,incident:()=>incident(p[1]),advisory:()=>advisory(p[1]),status,report,architecture:arch,verify:()=>incident(p[1])}[p[0]]||dash;health();try{await t()}catch(e){view('<div class="sec"><h2>Something went wrong</h2><p class="err">'+esc(e.message)+'</p><a href="#/">Back to overview</a></div>')}}
+window.addEventListener('hashchange',()=>{if(location.hash==='#decision')return;view('<div class="skel" role="status">Loading…</div>');route()});route();
+</script></body></html>

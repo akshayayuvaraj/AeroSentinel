@@ -1,0 +1,10 @@
+[
+  {
+    "role": "user",
+    "content": [
+      {
+        "text": "You are AeroSentinel AI. A resident reports thick smoke near an industrial area. No satellite detection or air-quality sensor data is confirmed. Summarize the incident, state the evidence status, list potential environmental concerns, recommend verification steps, and provide a cautious public advisory. Clearly label the report UNVERIFIED. Do not invent measurements or identify an unconfirmed source."
+      }
+    ]
+  }
+]
